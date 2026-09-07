@@ -1,5 +1,31 @@
 # 0.1 validation — 2026-09-07
 
+## Preview cache and selection contrast
+
+Installed release SHA-256:
+`3866dc8ef72d91dbddae8ece7b7e72bf89a36eb043c63e1d1093b1b70a149026`.
+Thumbnail padding preserves all four image corners. Clipboard previews prepare
+PNGs off the UI thread and retain the latest five private cache files. Explicit
+save paths and clipboard contents are preserved. A dark under-stroke keeps the
+white selection border visible on white content without full-screen dimming.
+
+`cargo fmt --check`, `cargo check --locked`, `cargo test --locked` (49 passed),
+strict Clippy, release build, and diff checks passed. The isolated preview
+benchmark completed 40/40 samples: clipboard click-to-launcher median fell from
+149.990ms to 4.916ms when the cached PNG was ready. Real viewer startup is outside
+this metric. See [methods, results, and limitations](preview-improvements.md)
+and [raw trials](benchmarks/preview-2026-09-07.json).
+
+Full X11 smoke passed 22/22 checks at both 1024×768 and 5560×1920, including
+exact latest-five retention across restart, saved-file/clipboard preservation,
+thumbnail corners, and selection contrast. High-resolution redraw sampling
+passed 16/16 after increasing collection time without relaxing assertions.
+
+Installed with `python3 tools/install.py`; release and installed hashes match.
+No keyboard shortcuts were changed. The running clipboard-owning process was
+left alive to preserve its clipboard image. Quit it after using the current
+clipboard, then invoke a shortcut to start the updated executable.
+
 ## No-dim latency experiments
 
 Accepted release SHA-256:

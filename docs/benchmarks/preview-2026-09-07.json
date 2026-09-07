@@ -1,0 +1,156 @@
+{
+  "schema": "snipchord.preview-latency.v1",
+  "metric": "thumbnail click to controlled xdg-open invocation",
+  "xvfb": "/tmp/snipchord-latency-lab/modern-xvfb/usr/bin/Xvfb",
+  "timing": {
+    "start_clock": "Python time.time_ns immediately before xdotool click",
+    "open_clock": "GNU date +%s%N at xdg-open stub entry",
+    "note": "The interval excludes xdotool's synchronous return wait and viewer startup."
+  },
+  "display": {
+    "width": 5560,
+    "height": 1920
+  },
+  "samples_per_condition": 10,
+  "conditions": [
+    {
+      "binary_sha256": "24d23c75235b90f889cc7e098f0c30e99e5b414cb4a9a136993e3e150c8dc870",
+      "mode": "save",
+      "prepared_cache_expected": false,
+      "requested": 10,
+      "completed": 10,
+      "failures": [],
+      "click_to_xdg_open_ms": {
+        "p50": 4.1752994999999995,
+        "p95": 5.175725849999998,
+        "min": 3.191157,
+        "max": 5.797629,
+        "samples": [
+          4.151315,
+          4.199284,
+          3.463254,
+          4.369434,
+          5.797629,
+          4.415622,
+          4.325659,
+          3.191157,
+          3.775754,
+          3.890161
+        ]
+      },
+      "clipboard_prepare_wait_ms": {
+        "p50": null,
+        "p95": null,
+        "samples": []
+      },
+      "label": "baseline"
+    },
+    {
+      "binary_sha256": "24d23c75235b90f889cc7e098f0c30e99e5b414cb4a9a136993e3e150c8dc870",
+      "mode": "clipboard",
+      "prepared_cache_expected": false,
+      "requested": 10,
+      "completed": 10,
+      "failures": [],
+      "click_to_xdg_open_ms": {
+        "p50": 149.989664,
+        "p95": 172.85739959999998,
+        "min": 140.422534,
+        "max": 182.441874,
+        "samples": [
+          182.441874,
+          145.863554,
+          148.856896,
+          151.122432,
+          158.281947,
+          146.114041,
+          144.12887,
+          153.095892,
+          140.422534,
+          161.143042
+        ]
+      },
+      "clipboard_prepare_wait_ms": {
+        "p50": null,
+        "p95": null,
+        "samples": []
+      },
+      "label": "baseline"
+    },
+    {
+      "binary_sha256": "3866dc8ef72d91dbddae8ece7b7e72bf89a36eb043c63e1d1093b1b70a149026",
+      "mode": "save",
+      "prepared_cache_expected": false,
+      "requested": 10,
+      "completed": 10,
+      "failures": [],
+      "click_to_xdg_open_ms": {
+        "p50": 4.877928,
+        "p95": 8.674568649999996,
+        "min": 3.464314,
+        "max": 10.752103,
+        "samples": [
+          3.464314,
+          5.223242,
+          3.788282,
+          4.11421,
+          5.477373,
+          6.13536,
+          4.532614,
+          6.026059,
+          3.86211,
+          10.752103
+        ]
+      },
+      "clipboard_prepare_wait_ms": {
+        "p50": null,
+        "p95": null,
+        "samples": []
+      },
+      "label": "candidate"
+    },
+    {
+      "binary_sha256": "3866dc8ef72d91dbddae8ece7b7e72bf89a36eb043c63e1d1093b1b70a149026",
+      "mode": "clipboard",
+      "prepared_cache_expected": true,
+      "requested": 10,
+      "completed": 10,
+      "failures": [],
+      "click_to_xdg_open_ms": {
+        "p50": 4.9162345,
+        "p95": 7.228788799999999,
+        "min": 3.421133,
+        "max": 7.344671,
+        "samples": [
+          5.744219,
+          4.996566,
+          3.72598,
+          4.172049,
+          7.344671,
+          4.835903,
+          4.149806,
+          7.087155,
+          3.421133,
+          5.331097
+        ]
+      },
+      "clipboard_prepare_wait_ms": {
+        "p50": 163.01404750265647,
+        "p95": 208.6194075007369,
+        "samples": [
+          245.48574300206383,
+          163.2001610014413,
+          163.56055299911532,
+          163.15728700283216,
+          163.4978929978388,
+          162.87080800248077,
+          162.69381900201552,
+          162.7177929985919,
+          162.61861000020872,
+          162.83959000065806
+        ]
+      },
+      "label": "candidate"
+    }
+  ]
+}

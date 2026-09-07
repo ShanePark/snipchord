@@ -564,6 +564,52 @@ def _wait_for_opened_path(log: Path, timeout: float = 3) -> Path:
     raise SmokeError(f"xdg-open was not called; log={log}")
 
 
+def _temporary_preview_paths(env: Mapping[str, str]) -> set[Path]:
+    """Return SnipChord's private preview PNGs without touching user files."""
+    cache_home = Path(env.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    directory = cache_home / "snipchord" / "previews"
+    return {
+        path.resolve()
+        for path in directory.glob(".snipchord-preview-*.png")
+        if path.is_file()
+    }
+
+
+def _wait_for_new_preview_paths(
+    env: Mapping[str, str], previous: set[Path], timeout: float = 4
+) -> set[Path]:
+    """Wait for an asynchronously prepared clipboard preview artifact."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        current = _temporary_preview_paths(env) - previous
+        if current:
+            return current
+        time.sleep(0.02)
+    raise SmokeError(
+        "clipboard capture did not prepare a private preview PNG before the thumbnail click"
+    )
+
+
+def _resident_fullscreen_clipboard_capture(
+    binary: Path,
+    env: Mapping[str, str],
+    resident: subprocess.Popen[bytes],
+    root_size: tuple[int, int],
+) -> str:
+    """Ask an existing daemon for one capture and return its output."""
+    command = _run([str(binary), "--fullscreen", "--clipboard"], env, timeout=8)
+    if command.returncode != 0:
+        raise SmokeError(
+            "resident fullscreen clipboard command failed: "
+            f"{command.stderr.decode(errors='replace')[-1000:]}"
+        )
+    match, output = _read_until(resident, CAPTURE_RE, 12)
+    dimensions = (int(match["width"]), int(match["height"]))
+    if dimensions != root_size:
+        raise SmokeError(f"resident clipboard capture reported {dimensions}; output={output[-1000:]}")
+    return output
+
+
 def _click_thumbnail(env: Mapping[str, str], root_size: tuple[int, int]) -> dict[str, int | str]:
     geometry = _wait_for_thumbnail_window(env, root_size, 8)
     x = int(geometry["x"]) + int(geometry["width"]) // 2
@@ -823,6 +869,31 @@ def _publish_fixture(env: Mapping[str, str], width: int, height: int):
         # Keep this connection alive for the duration of the smoke run.  Xvfb can
         # reset its root pixmap when the last client disconnects; a persistent
         # fixture owner makes the pixels stable while SnipChord captures them.
+        return connection
+    except Exception:
+        connection.close()
+        raise
+
+
+def _publish_uniform_fixture(
+    env: Mapping[str, str], width: int, height: int, color: tuple[int, int, int]
+):
+    """Paint one uniform root surface and keep its X11 connection alive."""
+    try:
+        from Xlib import display
+    except ImportError as error:
+        raise SmokeError("python-xlib is required to publish a uniform X11 fixture") from error
+    connection = display.Display(env["DISPLAY"])
+    try:
+        root = connection.screen().root
+        red, green, blue = color
+        pixel = (red << 16) | (green << 8) | blue
+        gc = root.create_gc(foreground=pixel, background=pixel)
+        try:
+            root.fill_rectangle(gc, 0, 0, width, height)
+        finally:
+            gc.free()
+        connection.sync()
         return connection
     except Exception:
         connection.close()
@@ -1506,6 +1577,109 @@ def _assert_selection_visual(path: Path, expected_size: tuple[int, int]) -> None
         raise SmokeError(f"could not inspect selection artifact: {error}") from error
 
 
+def _selection_border_contrast(
+    binary: Path,
+    env: Mapping[str, str],
+    root_size: tuple[int, int],
+    artifacts_dir: Path,
+) -> dict[str, object]:
+    """Check the white selection stroke on both uniform dark and white roots.
+
+    The dark under-stroke is especially important on a white desktop: testing
+    only the final screenshot would miss a selector that looks correct on dark
+    content while disappearing against a bright surface.  The committed PNG
+    is checked separately to ensure this UI treatment never enters the crop.
+    """
+    settings = Path(env["XDG_CONFIG_HOME"]) / "snipchord" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(
+        json.dumps(
+            {
+                "save_automatically": False,
+                "show_preview": False,
+                "output_directory": "~/Downloads",
+            }
+        )
+        + "\n"
+    )
+    results: dict[str, object] = {}
+    for label, background in (("dark", (24, 24, 24)), ("white", (255, 255, 255))):
+        fixture = _publish_uniform_fixture(env, root_size[0], root_size[1], background)
+        app = _spawn([str(binary), "--region", "--clipboard"], env)
+        artifact = artifacts_dir / f"snipchord-selection-contrast-{label}.png"
+        try:
+            _wait_selection_start(app)
+            _run(["xdotool", "mousemove", "100", "100"], env)
+            _run(["xdotool", "mousedown", "1"], env)
+            _run(["xdotool", "mousemove", "300", "250"], env)
+            selection = _wait_for_window_geometry(
+                env,
+                lambda window: int(window["width"]) == root_size[0]
+                and int(window["height"]) == root_size[1],
+                4,
+            )
+            _capture_window_png(env, str(selection["id"]), artifact)
+            try:
+                from PIL import Image
+            except ImportError as error:
+                raise SmokeError("Pillow is required for selection contrast verification") from error
+            with Image.open(artifact) as image:
+                image = image.convert("RGB")
+                # The drag is from (100,100) to (300,250); the midpoint of the
+                # top edge is therefore stable and away from pointer handles.
+                border = image.getpixel((150, 100))
+                outside = image.getpixel((150, 99))
+                if border != (255, 255, 255):
+                    raise SmokeError(
+                        f"{label} selection border is not white: observed={border}"
+                    )
+                if label == "white" and outside == background:
+                    raise SmokeError(
+                        "white-background selection has no contrasting dark under-stroke: "
+                        f"outside={outside}"
+                    )
+
+            _run(["xdotool", "mouseup", "1"], env)
+            match, output = _read_until(app, CAPTURE_RE, 8)
+            dimensions = (int(match["width"]), int(match["height"]))
+            if dimensions != (200, 150):
+                raise SmokeError(
+                    f"{label} selection capture reported {dimensions}; output={output[-1000:]}"
+                )
+            png = _clipboard_target(env, "image/png")
+            try:
+                from PIL import Image
+
+                with Image.open(io.BytesIO(png)) as image:
+                    image = image.convert("RGB")
+                    if image.size != dimensions:
+                        raise SmokeError(
+                            f"{label} output dimensions {image.size} != {dimensions}"
+                        )
+                    colors = set(image.getdata())
+            except SmokeError:
+                raise
+            except Exception as error:
+                raise SmokeError(f"could not inspect {label} selection output: {error}") from error
+            if colors != {background}:
+                raise SmokeError(
+                    f"{label} selection output was altered by overlay pixels: "
+                    f"colors={sorted(colors)[:8]}"
+                )
+            results[label] = {
+                "border": border,
+                "understroke": outside,
+                "output_colors": len(colors),
+                "artifact": str(artifact),
+            }
+        finally:
+            with contextlib.suppress(Exception):
+                _run(["xdotool", "mouseup", "1"], env, timeout=2)
+            _terminate(app)
+            fixture.close()
+    return results
+
+
 def _assert_plain_selection_overlay(
     path: Path,
     root_size: tuple[int, int],
@@ -1748,14 +1922,99 @@ def _assert_thumbnail_visual(
             samples = tuple(image.getpixel(point) for point in sample_points)
             if len(set(samples)) < 2:
                 raise SmokeError("thumbnail image is blank or solid instead of the captured desktop")
-            return {"geometry": (width, height), "samples": samples}
+            corners = _thumbnail_image_corners(
+                image,
+                window,
+                expected_image_size,
+            )
+            return {
+                "geometry": (width, height),
+                "samples": samples,
+                "image_corners": corners,
+            }
     except SmokeError:
         raise
     except Exception as error:
         raise SmokeError(f"could not inspect thumbnail artifact: {error}") from error
 
 
-def _assert_window_is_rounded(env: Mapping[str, str], window_id: str) -> dict[str, object]:
+def _thumbnail_content_geometry(
+    window: Mapping[str, int | str],
+    expected_image_size: tuple[int, int],
+) -> tuple[int, int, int, int]:
+    """Return the expected image rectangle inside the image-only thumbnail.
+
+    The Rust thumbnail uses nearest-neighbour sampling into a 220x140 box and
+    a symmetric frame.  Deriving the inset from the observed outer geometry
+    keeps this check independent of the chosen frame width while still
+    detecting an image corner that falls outside the rounded Shape region.
+    """
+    source_width, source_height = expected_image_size
+    if source_width <= 0 or source_height <= 0:
+        raise SmokeError(f"invalid source image dimensions: {expected_image_size}")
+    scale = min(220 / source_width, 140 / source_height, 1.0)
+    # Rust's f64::round rounds halfway cases away from zero; Python's round
+    # uses bankers rounding, so spell out the positive-input equivalent.
+    image_width = max(1, int(source_width * scale + 0.5))
+    image_height = max(1, int(source_height * scale + 0.5))
+    window_width = int(window["width"])
+    window_height = int(window["height"])
+    if window_width < image_width or window_height < image_height:
+        raise SmokeError(
+            "thumbnail window is smaller than its captured image: "
+            f"window={(window_width, window_height)} image={(image_width, image_height)}"
+        )
+    inset_x = (window_width - image_width) // 2
+    inset_y = (window_height - image_height) // 2
+    if inset_x * 2 + image_width != window_width or inset_y * 2 + image_height != window_height:
+        raise SmokeError(
+            "thumbnail frame is not symmetric around the captured image: "
+            f"window={(window_width, window_height)} image={(image_width, image_height)}"
+        )
+    return inset_x, inset_y, image_width, image_height
+
+
+def _thumbnail_image_corners(
+    image: object,
+    window: Mapping[str, int | str],
+    expected_image_size: tuple[int, int],
+) -> tuple[tuple[int, int, int], ...]:
+    """Assert that all four source-image corners survive thumbnail framing."""
+    # Keep the type annotation above broad so this helper can be used with the
+    # PIL image object without exposing Pillow in the module's public helpers.
+    inset_x, inset_y, image_width, image_height = _thumbnail_content_geometry(
+        window,
+        expected_image_size,
+    )
+    source_width, source_height = expected_image_size
+    target_corners = (
+        (0, 0),
+        (image_width - 1, 0),
+        (0, image_height - 1),
+        (image_width - 1, image_height - 1),
+    )
+    observed: list[tuple[int, int, int]] = []
+    for image_x, image_y in target_corners:
+        target_x = inset_x + image_x
+        target_y = inset_y + image_y
+        source_x = min(source_width - 1, image_x * source_width // image_width)
+        source_y = min(source_height - 1, image_y * source_height // image_height)
+        pixel = tuple(image.getpixel((target_x, target_y)))
+        expected = _fixture_pixel(source_x, source_y)
+        if pixel != expected:
+            raise SmokeError(
+                "thumbnail clipped or altered a captured image corner: "
+                f"target={(target_x, target_y)} observed={pixel} expected={expected}"
+            )
+        observed.append(pixel)
+    return tuple(observed)
+
+
+def _assert_window_is_rounded(
+    env: Mapping[str, str],
+    window_id: str,
+    expected_image_size: tuple[int, int] | None = None,
+) -> dict[str, object]:
     """Require rounded thumbnail corners, using X11 Shape when available."""
     try:
         from Xlib import display
@@ -1779,7 +2038,37 @@ def _assert_window_is_rounded(env: Mapping[str, str], window_id: str) -> dict[st
                 raise SmokeError(
                     f"thumbnail bounding shape is rectangular ({bounding_area} == {width * height})"
                 )
-            return {"rectangles": len(rectangles), "bounding_area": bounding_area}
+            result: dict[str, object] = {
+                "rectangles": len(rectangles),
+                "bounding_area": bounding_area,
+            }
+            if expected_image_size is not None:
+                inset_x, inset_y, image_width, image_height = _thumbnail_content_geometry(
+                    {"width": width, "height": height},
+                    expected_image_size,
+                )
+
+                def contains(x: int, y: int) -> bool:
+                    return any(
+                        int(rect.x) <= x < int(rect.x) + int(rect.width)
+                        and int(rect.y) <= y < int(rect.y) + int(rect.height)
+                        for rect in rectangles
+                    )
+
+                image_corners = (
+                    (inset_x, inset_y),
+                    (inset_x + image_width - 1, inset_y),
+                    (inset_x, inset_y + image_height - 1),
+                    (inset_x + image_width - 1, inset_y + image_height - 1),
+                )
+                missing = [point for point in image_corners if not contains(*point)]
+                if missing:
+                    raise SmokeError(
+                        "thumbnail Shape clips captured image corners: "
+                        f"missing={missing} image={(inset_x, inset_y, image_width, image_height)}"
+                    )
+                result["image_corners_in_shape"] = True
+            return result
 
         # Minimal Xvfb builds may omit the Shape extension.  The UI still
         # paints a rounded card inside its shadow rectangle, so verify those
@@ -1946,7 +2235,12 @@ def _selection_redraw_has_no_intermediate_frame(
         motion_thread = threading.Thread(target=drive_motion, name="snipchord-motion")
         motion_thread.start()
         samples = 0
-        deadline = time.monotonic() + 6
+        # Sampling a 5560x1920 surface invokes xwd and ImageMagick for every
+        # frame. Keep the required 16 samples unchanged, but give that
+        # high-resolution capture enough wall time to finish after the motion
+        # driver has delivered its events.
+        sampling_timeout = 20 if width * height > 2_000_000 else 6
+        deadline = time.monotonic() + sampling_timeout
         while (motion_thread.is_alive() or samples < 16) and time.monotonic() < deadline:
             observed = _selection_frame_samples(env, window_id, points)
             if observed != expected:
@@ -2644,7 +2938,7 @@ def _preferences_and_preview(
             visual = _assert_thumbnail_visual(artifact, geometry, dimensions)
         else:
             visual = {"geometry": (int(geometry["width"]), int(geometry["height"]))}
-        shape = _assert_window_is_rounded(env, window_id)
+        shape = _assert_window_is_rounded(env, window_id, dimensions)
 
         focus_connection.sync()
         current_focus = focus_connection.get_input_focus().focus
@@ -2718,27 +3012,43 @@ def _preview_click_opens_saved_and_clipboard(
         _terminate(sentinel)
 
     log.unlink(missing_ok=True)
+    temp_before_clipboard = _temporary_preview_paths(open_env)
     clipboard_app = _spawn([str(binary), "--fullscreen", "--clipboard"], open_env)
-    temp_prefix = f".snipchord-preview-{clipboard_app.pid}-"
+    restarted_app: subprocess.Popen[bytes] | None = None
+    generated_paths: set[Path] = set()
+    latest_path: Path | None = None
     try:
         match, output = _read_until(clipboard_app, CAPTURE_RE, 12)
         dimensions = (int(match["width"]), int(match["height"]))
         if dimensions != root_size:
             raise SmokeError(f"clipboard preview reported {dimensions}; output={output[-1000:]}")
-        temp_paths = set(Path("/tmp").glob(f"{temp_prefix}*.png"))
-        if temp_paths:
-            raise SmokeError(f"clipboard preview wrote temp files before click: {sorted(temp_paths)}")
+        generated_paths = _wait_for_new_preview_paths(open_env, temp_before_clipboard)
+        if len(generated_paths) != 1:
+            raise SmokeError(
+                "clipboard preview prepared more than one artifact for one capture: "
+                f"{sorted(generated_paths)}"
+            )
+        prepared_path = next(iter(generated_paths))
         before_png = _clipboard_target(open_env, "image/png")
         before_targets = _clipboard_targets(open_env)
         _click_thumbnail(open_env, root_size)
         temp_path = _wait_for_opened_path(log).resolve()
-        if not temp_path.name.startswith(temp_prefix):
-            raise SmokeError(f"clipboard preview opened an unexpected path: {temp_path}")
+        if temp_path != prepared_path:
+            raise SmokeError(
+                "clipboard preview click encoded a different file instead of reusing "
+                f"the prepared path: prepared={prepared_path} opened={temp_path}"
+            )
         if not temp_path.is_file():
             raise SmokeError(f"clipboard preview path does not exist: {temp_path}")
-        temp_paths = {path.resolve() for path in Path("/tmp").glob(f"{temp_prefix}*.png")}
-        if temp_paths != {temp_path}:
-            raise SmokeError(f"clipboard preview created unexpected temp files: {sorted(temp_paths)}")
+        temp_paths = _temporary_preview_paths(open_env)
+        if temp_path not in temp_paths:
+            raise SmokeError(f"prepared clipboard preview disappeared before opening: {temp_path}")
+        new_after_click = temp_paths - temp_before_clipboard
+        if new_after_click != generated_paths:
+            raise SmokeError(
+                "clipboard preview click created or removed cache artifacts: "
+                f"before={sorted(generated_paths)} after={sorted(new_after_click)}"
+            )
         temp_png = temp_path.read_bytes()
         if _image_pixels(temp_png) != _image_pixels(before_png):
             raise SmokeError("temporary preview image differs from the clipboard image")
@@ -2747,22 +3057,80 @@ def _preview_click_opens_saved_and_clipboard(
         if _clipboard_targets(open_env) != before_targets:
             raise SmokeError("clicking a clipboard preview changed clipboard targets")
 
+        # Keep five artifacts across a resident restart.  The sixth capture
+        # must rotate out the oldest private cache entry, while the saved-file
+        # path tested above remains independent of this cache policy.
+        capture_paths = [prepared_path]
+        for _ in range(5):
+            previous_paths = _temporary_preview_paths(open_env)
+            _resident_fullscreen_clipboard_capture(binary, open_env, clipboard_app, root_size)
+            created = _wait_for_new_preview_paths(open_env, previous_paths)
+            if len(created) != 1:
+                raise SmokeError(
+                    "one clipboard capture did not produce exactly one cache artifact: "
+                    f"{sorted(created)}"
+                )
+            latest_path = next(iter(created))
+            capture_paths.append(latest_path)
+            generated_paths.update(created)
+        retained_before_restart = _temporary_preview_paths(open_env) & generated_paths
+        expected_retained = set(capture_paths[-5:])
+        if len(generated_paths) < 6:
+            raise SmokeError(
+                "clipboard preview cache did not create one unique artifact per capture: "
+                f"created={sorted(generated_paths)}"
+            )
+        if retained_before_restart != expected_retained:
+            raise SmokeError(
+                "clipboard preview cache did not retain exactly the newest five artifacts: "
+                f"expected={sorted(expected_retained)} actual={sorted(retained_before_restart)}"
+            )
+        if latest_path is None or latest_path not in retained_before_restart:
+            raise SmokeError("latest clipboard preview artifact was rotated out prematurely")
+
         _run([str(binary), "--quit"], open_env, timeout=8)
         deadline = time.monotonic() + 3
         while clipboard_app.poll() is None and time.monotonic() < deadline:
             time.sleep(0.05)
         if clipboard_app.poll() is None:
             raise SmokeError("clipboard preview app did not exit after --quit")
-        if temp_path.exists():
-            raise SmokeError(f"temporary preview was not cleaned up on app exit: {temp_path}")
+        retained_after_quit = _temporary_preview_paths(open_env) & generated_paths
+        if retained_after_quit != expected_retained:
+            raise SmokeError(
+                "clipboard preview shutdown changed the newest-five cache set: "
+                f"expected={sorted(expected_retained)} actual={sorted(retained_after_quit)}"
+            )
+
+        restarted_app = _spawn([str(binary), "--daemon"], open_env)
+        _wait_for_instance_owner(open_env, 5)
+        retained_after_restart = _temporary_preview_paths(open_env) & generated_paths
+        if retained_after_restart != expected_retained:
+            raise SmokeError(
+                "clipboard preview startup cleanup changed the newest-five cache set: "
+                f"expected={sorted(expected_retained)} actual={sorted(retained_after_restart)}"
+            )
+        if latest_path not in retained_after_restart:
+            raise SmokeError("startup cleanup removed the newest retained preview artifact")
+        if saved_path is None or not saved_path.is_file():
+            raise SmokeError("saved screenshot disappeared while rotating clipboard preview cache")
+        _run([str(binary), "--quit"], open_env, timeout=8)
+        deadline = time.monotonic() + 3
+        while restarted_app.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if restarted_app.poll() is None:
+            raise SmokeError("restarted clipboard preview daemon did not exit after --quit")
         return {
             "saved_path": str(saved_path),
             "clipboard_temp": str(temp_path),
+            "prepared_before_click": True,
+            "cache_created": len(generated_paths),
+            "cache_retained": len(retained_after_restart),
             "clipboard_preserved": True,
         }
     finally:
+        _terminate(restarted_app)
         _terminate(clipboard_app)
-        for path in Path("/tmp").glob(f"{temp_prefix}*.png"):
+        for path in generated_paths:
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()
 
@@ -2995,6 +3363,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                         (args.width, args.height),
                     )
                     _failed_pointer_grab_releases_keyboard(binary, env)
+                    contrast = _selection_border_contrast(
+                        binary,
+                        env,
+                        (args.width, args.height),
+                        args.artifacts_dir,
+                    )
                     print(f"PASS demo clipboard, Escape, Space dimensions={dimensions}")
                     print(f"PASS plain click cancels empty region {click_cancel}")
                     print(f"PASS immediate post-hotkey drag {immediate_drag}")
@@ -3016,6 +3390,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"PASS preferences recovery {preferences_recovery}")
                     print(f"PASS deferred keyboard grab pointer/cancel {keyboard_busy}")
                     print("PASS genuine pointer grab failure cleanup and daemon retry")
+                    print(f"PASS selection border contrast and clean output {contrast}")
                     print(f"visual artifacts: {args.artifacts_dir}")
                     _measure_rss(binary, env)
                 finally:

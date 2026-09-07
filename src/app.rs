@@ -5,6 +5,7 @@
 //! Keeping those responsibilities separate lets a hotkey invocation reuse the
 //! same X connection without making the UI depend on a toolkit runtime.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
@@ -14,7 +15,8 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::thread;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
@@ -33,6 +35,19 @@ use crate::x11::{Instance, InstanceClaim, X11Context};
 /// Errors returned by application operations share the same bound used by the
 /// low-level X11, image, and clipboard modules.
 pub type AppResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+
+enum PreviewCompletion {
+    Prepared(storage::PreparedPreview),
+    SavedElsewhere,
+}
+
+type PreviewPreparationResult = Result<PreviewCompletion, Box<dyn Error + Send + Sync>>;
+
+struct PreviewPreparation {
+    generation: u64,
+    result: Receiver<PreviewPreparationResult>,
+    handle: JoinHandle<()>,
+}
 
 const COMMAND_REGION: u32 = 1;
 const COMMAND_FULLSCREEN: u32 = 2;
@@ -445,7 +460,13 @@ pub struct App {
     settings: Settings,
     image: Option<RgbaImage>,
     saved_path: Option<PathBuf>,
-    preview_temp_files: Vec<PathBuf>,
+    preview_preparations: Vec<PreviewPreparation>,
+    preview_completions: BTreeMap<u64, PreviewPreparationResult>,
+    preview_generation: u64,
+    next_preview_generation: u64,
+    next_preview_publication: u64,
+    preview_ready: Option<(u64, PathBuf)>,
+    pending_preview_open: Option<u64>,
     pending_image: Option<RgbaImage>,
     pending_output: Option<OutputMode>,
     current_demo: bool,
@@ -480,6 +501,10 @@ impl App {
             }
         };
 
+        if let Err(error) = storage::cleanup_preview_cache() {
+            eprintln!("snipchord: preview cache cleanup: {error}");
+        }
+
         Ok(Self {
             context,
             instance: Some(instance),
@@ -489,7 +514,13 @@ impl App {
             settings,
             image: None,
             saved_path: None,
-            preview_temp_files: Vec::new(),
+            preview_preparations: Vec::new(),
+            preview_completions: BTreeMap::new(),
+            preview_generation: 0,
+            next_preview_generation: 0,
+            next_preview_publication: 1,
+            preview_ready: None,
+            pending_preview_open: None,
             pending_image: None,
             pending_output: None,
             current_demo: false,
@@ -531,10 +562,18 @@ impl App {
         }
     }
 
+    fn invalidate_preview_generation(&mut self) {
+        self.preview_ready = None;
+    }
+
     fn begin_capture(&mut self, fullscreen: bool, demo: bool, output: OutputMode) -> AppResult<()> {
         if self.pending_image.is_some() || self.ui.has_selection() {
             return Ok(());
         }
+        // A new capture invalidates the current ready path.  An earlier click
+        // remains associated with its own generation so it can still open the
+        // correct image if that worker finishes after this capture starts.
+        self.invalidate_preview_generation();
 
         // Install the cursor and input grabs before any
         // geometry/configuration reads or full-screen capture work.  On a
@@ -747,6 +786,23 @@ impl App {
         self.image = Some(image);
         self.current_demo = demo;
         self.saved_path = saved;
+        self.preview_generation = self.next_preview_generation.wrapping_add(1);
+        self.next_preview_generation = self.preview_generation;
+        self.invalidate_preview_generation();
+
+        if self.saved_path.is_some() {
+            self.preview_completions.insert(
+                self.preview_generation,
+                Ok(PreviewCompletion::SavedElsewhere),
+            );
+        } else if let Some(image) = self.image.as_ref().cloned() {
+            if let Err(error) = self.start_preview_preparation(self.preview_generation, image) {
+                self.preview_completions
+                    .insert(self.preview_generation, Err(error));
+            }
+        }
+        self.publish_preview_completions();
+
         let (image_width, image_height) = self
             .image
             .as_ref()
@@ -774,6 +830,100 @@ impl App {
             image_width, image_height
         );
         Ok(())
+    }
+
+    fn start_preview_preparation(&mut self, generation: u64, image: RgbaImage) -> AppResult<()> {
+        let (sender, result) = mpsc::channel();
+        let handle = thread::Builder::new()
+            .name("snipchord-preview-png".to_owned())
+            .spawn(move || {
+                let result =
+                    storage::prepare_temporary_image(&image).map(PreviewCompletion::Prepared);
+                let _ = sender.send(result);
+            })
+            .map_err(|error| Box::new(error) as Box<dyn Error + Send + Sync>)?;
+        self.preview_preparations.push(PreviewPreparation {
+            generation,
+            result,
+            handle,
+        });
+        Ok(())
+    }
+
+    fn poll_preview_preparations(&mut self) {
+        let mut completed = Vec::new();
+        let mut finished = Vec::new();
+        for (index, preparation) in self.preview_preparations.iter_mut().enumerate() {
+            match preparation.result.try_recv() {
+                Ok(result) => {
+                    completed.push((preparation.generation, result));
+                    finished.push(index);
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    completed.push((
+                        preparation.generation,
+                        Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "preview preparation stopped before publishing",
+                        )
+                        .into()),
+                    ));
+                    finished.push(index);
+                }
+            }
+        }
+
+        for index in finished.into_iter().rev() {
+            let preparation = self.preview_preparations.remove(index);
+            let _ = preparation.handle.join();
+        }
+        for (generation, result) in completed {
+            self.preview_completions.insert(generation, result);
+        }
+        self.publish_preview_completions();
+    }
+
+    fn publish_preview_completions(&mut self) {
+        loop {
+            let generation = self.next_preview_publication;
+            let Some(completion) = self.preview_completions.remove(&generation) else {
+                break;
+            };
+            match completion {
+                Ok(PreviewCompletion::SavedElsewhere) => {}
+                Ok(PreviewCompletion::Prepared(prepared)) => {
+                    match storage::publish_temporary_image(prepared) {
+                        Ok(path) => {
+                            if let Err(error) = storage::rotate_preview_cache() {
+                                eprintln!("snipchord: preview cache rotation: {error}");
+                            }
+                            if self.preview_generation == generation {
+                                self.preview_ready = Some((generation, path.clone()));
+                            }
+                            if self.pending_preview_open == Some(generation) {
+                                self.pending_preview_open = None;
+                                if let Err(error) = open_with_default_image_viewer(&path) {
+                                    self.notify("Could not open screenshot", &error.to_string());
+                                }
+                            }
+                        }
+                        Err(error) => self.preview_preparation_failed(generation, error),
+                    }
+                }
+                Err(error) => self.preview_preparation_failed(generation, error),
+            }
+            self.next_preview_publication = self.next_preview_publication.wrapping_add(1);
+        }
+    }
+
+    fn preview_preparation_failed(&mut self, generation: u64, error: Box<dyn Error + Send + Sync>) {
+        if self.pending_preview_open == Some(generation) {
+            self.pending_preview_open = None;
+            self.notify("Could not open screenshot", &error.to_string());
+        } else {
+            eprintln!("snipchord: preview preparation: {error}");
+        }
     }
 
     fn show_preferences(&mut self) -> AppResult<()> {
@@ -921,46 +1071,49 @@ impl App {
     }
 
     fn open_preview(&mut self) -> AppResult<()> {
-        let saved_path = self.saved_path.clone();
-        let (path, temporary) = match saved_path {
-            Some(path) if path.is_file() => (path, false),
-            _ => {
-                let image = self.image.as_ref().ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::NotFound, "no screenshot is available")
-                })?;
-                (storage::save_temporary_image(image)?, true)
-            }
-        };
-        let path = match fs::canonicalize(&path) {
-            Ok(path) => path,
-            Err(error) => {
-                if temporary {
-                    let _ = fs::remove_file(&path);
-                }
-                return Err(error.into());
-            }
-        };
+        if let Some(path) = self.saved_path.clone().filter(|path| path.is_file()) {
+            let path = fs::canonicalize(path)?;
+            return open_with_default_image_viewer(&path).map_err(Into::into);
+        }
 
-        if let Err(error) = open_with_default_image_viewer(&path) {
-            if temporary {
-                let _ = fs::remove_file(&path);
+        if let Some((generation, path)) = self.preview_ready.clone() {
+            if generation == self.preview_generation && path.is_file() {
+                return open_with_default_image_viewer(&path).map_err(Into::into);
             }
-            return Err(error.into());
         }
-        if temporary {
-            self.preview_temp_files.push(path);
+
+        let preview_is_pending = self
+            .preview_preparations
+            .iter()
+            .any(|preparation| preparation.generation == self.preview_generation)
+            || self
+                .preview_completions
+                .contains_key(&self.preview_generation);
+        if preview_is_pending {
+            // The thumbnail may be clicked before the worker has published its
+            // file.  Keep the click associated with this exact capture and
+            // let the event loop open it after publication.
+            self.pending_preview_open = Some(self.preview_generation);
+            return Ok(());
         }
-        Ok(())
+
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no prepared screenshot preview is available",
+        )
+        .into())
     }
 
     fn event_loop(&mut self) -> AppResult<()> {
         while self.running {
+            self.poll_preview_preparations();
             self.drain_events()?;
             if !self.running {
                 break;
             }
             self.ui.tick(&self.context)?;
             self.clipboard.tick(&self.context.conn)?;
+            self.poll_preview_preparations();
             if !self.running {
                 break;
             }
@@ -974,8 +1127,11 @@ impl App {
                 break;
             }
 
-            let deadline =
-                earliest_deadline(self.ui.next_deadline(), self.clipboard.next_deadline());
+            let deadline = earliest_deadline(
+                earliest_deadline(self.ui.next_deadline(), self.clipboard.next_deadline()),
+                (!self.preview_preparations.is_empty())
+                    .then(|| Instant::now() + Duration::from_millis(8)),
+            );
             if deadline.is_some_and(|when| when <= Instant::now()) {
                 continue;
             }
@@ -1012,23 +1168,39 @@ impl App {
         Ok(())
     }
 
+    fn finish_preview_preparations(&mut self) {
+        self.pending_preview_open = None;
+        let preparations = std::mem::take(&mut self.preview_preparations);
+        for preparation in preparations {
+            let _ = preparation.handle.join();
+            match preparation.result.try_recv() {
+                Ok(result) => {
+                    self.preview_completions
+                        .insert(preparation.generation, result);
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
+                    self.preview_completions.insert(
+                        preparation.generation,
+                        Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "preview preparation stopped before publishing",
+                        )
+                        .into()),
+                    );
+                }
+            }
+        }
+        self.publish_preview_completions();
+    }
+
     fn shutdown(&mut self, primary: AppResult<()>) -> AppResult<()> {
+        self.finish_preview_preparations();
         let ui_result = self.ui.shutdown(&self.context);
         let clipboard_result = self.clipboard.release(&self.context.conn);
         let instance_result = self
             .instance
             .take()
             .map(|instance| instance.release(&self.context));
-        for path in self.preview_temp_files.drain(..) {
-            if let Err(error) = fs::remove_file(&path) {
-                if error.kind() != io::ErrorKind::NotFound {
-                    eprintln!(
-                        "snipchord: could not remove temporary preview {}: {error}",
-                        path.display()
-                    );
-                }
-            }
-        }
 
         primary
             .and(ui_result)

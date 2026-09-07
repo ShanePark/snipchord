@@ -39,11 +39,10 @@ const NOTICE_TIMEOUT: Duration = Duration::from_secs(5);
 // grows with the screenshot's aspect ratio but never becomes a second preview/editor surface.
 const PREVIEW_MAX_WIDTH: u32 = 220;
 const PREVIEW_MAX_HEIGHT: u32 = 140;
-// The thumbnail itself is the surface.  A two-pixel neutral frame gives the compositor and bare
-// X11 fallback a clean edge without the thick opaque matte that made the previous card feel like
-// a separate dialog.
-const PREVIEW_BORDER: i32 = 2;
-const PREVIEW_RADIUS: u16 = 14;
+// The thumbnail itself is the surface.  A five-pixel neutral frame leaves the complete image
+// inside the rounded X11 shape, so high-contrast pixels at the source corners are not cut off.
+const PREVIEW_BORDER: i32 = 5;
+const PREVIEW_RADIUS: u16 = 8;
 // A global shortcut can still own the keyboard for a short period after it
 // has delivered the capture command. Keep the pointer responsive and retry
 // keyboard ownership on the event-loop timer instead of blocking selection
@@ -210,6 +209,7 @@ struct Keycodes {
 
 struct Resources {
     copy_gc: Gcontext,
+    selection_shadow_gc: Gcontext,
     outline_gc: Gcontext,
     card_gc: Gcontext,
     frame_gc: Gcontext,
@@ -295,6 +295,18 @@ impl Ui {
         let button_pixel = alloc_color(context, 0x363e, 0x5050, 0x7070);
         let copy_gc =
             context.create_gc(context.root(), &CreateGCAux::new().graphics_exposures(0u32))?;
+        // Keep a dark under-stroke behind the white selection line so the rectangle remains
+        // readable over both light and dark desktop content.
+        let selection_shadow_gc = context.create_gc(
+            context.root(),
+            &CreateGCAux::new()
+                .foreground(card_pixel)
+                .background(card_pixel)
+                .line_width(3u32)
+                .cap_style(CapStyle::ROUND)
+                .join_style(JoinStyle::ROUND)
+                .graphics_exposures(0u32),
+        )?;
         let outline_gc = context.create_gc(
             context.root(),
             &CreateGCAux::new()
@@ -349,6 +361,7 @@ impl Ui {
             height: context.height(),
             resources: Resources {
                 copy_gc,
+                selection_shadow_gc,
                 outline_gc,
                 card_gc,
                 frame_gc,
@@ -1412,6 +1425,10 @@ impl Ui {
         self.close_capture_cursor(context)?;
         let resources = &self.resources;
         context.conn.free_gc(resources.copy_gc)?.check()?;
+        context
+            .conn
+            .free_gc(resources.selection_shadow_gc)?
+            .check()?;
         context.conn.free_gc(resources.outline_gc)?.check()?;
         context.conn.free_gc(resources.card_gc)?.check()?;
         context.conn.free_gc(resources.frame_gc)?.check()?;
@@ -1944,6 +1961,10 @@ impl Ui {
                         .check()?;
                     context
                         .conn
+                        .poly_rectangle(frame, self.resources.selection_shadow_gc, &[rectangle])?
+                        .check()?;
+                    context
+                        .conn
                         .poly_rectangle(frame, self.resources.outline_gc, &[rectangle])?
                         .check()?;
                 }
@@ -1966,19 +1987,37 @@ impl Ui {
                     .check()?;
                 context
                     .conn
+                    .poly_rectangle(frame, self.resources.selection_shadow_gc, &[rectangle])?
+                    .check()?;
+                context
+                    .conn
                     .poly_rectangle(frame, self.resources.outline_gc, &[rectangle])?
                     .check()?;
-                for (x, y) in corner_points(rectangle) {
-                    fill_rect(
-                        context,
+                let corners = corner_points(rectangle);
+                let shadow_handles = corners.map(|(x, y)| Rectangle {
+                    x: clamp_i16(x - 3),
+                    y: clamp_i16(y - 3),
+                    width: 6,
+                    height: 6,
+                });
+                context
+                    .conn
+                    .poly_fill_rectangle(
                         frame,
-                        self.resources.outline_gc,
-                        x - 2,
-                        y - 2,
-                        4,
-                        4,
-                    )?;
-                }
+                        self.resources.selection_shadow_gc,
+                        &shadow_handles,
+                    )?
+                    .check()?;
+                let handles = corners.map(|(x, y)| Rectangle {
+                    x: clamp_i16(x - 2),
+                    y: clamp_i16(y - 2),
+                    width: 4,
+                    height: 4,
+                });
+                context
+                    .conn
+                    .poly_fill_rectangle(frame, self.resources.outline_gc, &handles)?
+                    .check()?;
             }
         }
         context
@@ -3060,5 +3099,35 @@ fn clamp_point_to(point: Point, width: u16, height: u16) -> Point {
     Point {
         x: point.x.clamp(0, i32::from(width.saturating_sub(1))),
         y: point.y.clamp(0, i32::from(height.saturating_sub(1))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_image_corners_stay_inside_rounded_window_shape() {
+        let border = u16::try_from(PREVIEW_BORDER).expect("preview border fits u16");
+        let outer = Rectangle {
+            x: 0,
+            y: 0,
+            width: u16::try_from(PREVIEW_MAX_WIDTH + u32::from(border) * 2)
+                .expect("preview width fits u16"),
+            height: u16::try_from(PREVIEW_MAX_HEIGHT + u32::from(border) * 2)
+                .expect("preview height fits u16"),
+        };
+        let rows = rounded_shape_rows(outer, PREVIEW_RADIUS);
+        let image_right = i32::from(border) + i32::try_from(PREVIEW_MAX_WIDTH).unwrap();
+        let image_bottom = usize::from(border) + usize::try_from(PREVIEW_MAX_HEIGHT).unwrap();
+
+        assert!(rows.first().expect("top row").width < outer.width);
+        assert!(rows.last().expect("bottom row").width < outer.width);
+        for row in &rows[usize::from(border)..image_bottom] {
+            let left = i32::from(row.x);
+            let right = left + i32::from(row.width);
+            assert!(left <= i32::from(border));
+            assert!(right >= image_right);
+        }
     }
 }

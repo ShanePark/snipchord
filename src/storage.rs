@@ -7,14 +7,26 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const USER_DIRS_FILENAME: &str = "user-dirs.dirs";
 const SCREENSHOTS_DIRECTORY: &str = "Screenshots";
 const MAX_FILENAME_ATTEMPTS: u32 = 1_000_000;
 const TEMPORARY_FILENAME_ATTEMPTS: u32 = 128;
+const PREVIEW_CACHE_LIMIT: usize = 5;
+const PREVIEW_CACHE_DIRECTORY: &str = "snipchord/previews";
+const PREVIEW_FILENAME_PREFIX: &str = ".snipchord-preview-";
+const PREVIEW_STAGING_SUFFIX: &str = ".tmp";
 const ESCAPED_DOLLAR: char = '\u{e000}';
 
 static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A complete PNG that is waiting for the application to publish it into the
+/// preview cache.  The staging file is kept in the same directory as the
+/// destination so publication can use an atomic rename.
+pub struct PreparedPreview {
+    staging_path: PathBuf,
+}
 
 /// Save an image using an optional user-configured output directory.
 ///
@@ -29,23 +41,98 @@ pub fn save_image_with_directory(
     save_image_in(&screenshot_directory_for(configured_directory), image)
 }
 
-/// Write an image to a private temporary PNG for an external viewer.
+/// Return the private cache directory used for thumbnail previews.
 ///
-/// The caller owns the returned path and is responsible for removing it after
-/// the viewer no longer needs it.  The file is created with exclusive access
-/// so a concurrent capture cannot reuse the same name.
-pub fn save_temporary_image(
+/// The directory follows XDG cache conventions and is created with mode 0700
+/// by the first writer.  It contains only SnipChord-owned preview files; the
+/// user's configured screenshot directory is never used for this cache.
+pub fn preview_cache_directory() -> PathBuf {
+    let cache_home = env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|path| path.join(".cache"))
+        })
+        .unwrap_or_else(|| env::temp_dir().join("snipchord"));
+    cache_home.join(PREVIEW_CACHE_DIRECTORY)
+}
+
+/// Encode an image into a private, unpublished preview file in the cache.
+///
+/// The worker may perform this operation away from the X11 event loop.  The
+/// returned staging file is not visible to preview consumers until
+/// [`publish_temporary_image`] atomically renames it to its final `.png`
+/// name.
+pub fn prepare_temporary_image(
     image: &crate::image::RgbaImage,
+) -> Result<PreparedPreview, Box<dyn Error + Send + Sync>> {
+    let directory = ensure_preview_cache_directory()?;
+    prepare_temporary_image_in(&directory, image)
+}
+
+/// Publish a prepared preview and return its stable cache path.
+pub fn publish_temporary_image(
+    prepared: PreparedPreview,
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let directory = prepared.staging_path.parent().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            "preview staging path has no parent",
+        )
+    })?;
+    let destination = allocate_preview_destination(directory)?;
+    let result = fs::rename(&prepared.staging_path, &destination);
+    if let Err(error) = result {
+        let _ = fs::remove_file(&prepared.staging_path);
+        return Err(error.into());
+    }
+    Ok(destination)
+}
+
+/// Remove stale staging files and retain only the five newest published
+/// SnipChord preview PNGs.  This is intended for startup, before any new
+/// worker is launched.
+pub fn cleanup_preview_cache() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let directory = ensure_preview_cache_directory()?;
+    remove_staging_files(&directory)?;
+    rotate_preview_cache_in(&directory)
+}
+
+/// Rotate already-published preview PNGs after a new file is published.
+/// Staging files are deliberately left alone because other preparation
+/// workers may still be writing them.
+pub fn rotate_preview_cache() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let directory = ensure_preview_cache_directory()?;
+    rotate_preview_cache_in(&directory)
+}
+
+fn ensure_preview_cache_directory() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let directory = preview_cache_directory();
+    fs::create_dir_all(&directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(directory)
+}
+
+fn prepare_temporary_image_in(
+    directory: &Path,
+    image: &crate::image::RgbaImage,
+) -> Result<PreparedPreview, Box<dyn Error + Send + Sync>> {
     // Encode before touching the filesystem so invalid image data cannot leave
-    // an empty temporary file behind.
+    // an empty staging file behind.
     let encoded = image.to_png()?;
-    let directory = env::temp_dir();
 
     for _ in 0..TEMPORARY_FILENAME_ATTEMPTS {
         let sequence = TEMPORARY_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let filename = format!(".snipchord-preview-{}-{}.png", std::process::id(), sequence);
-        let destination = directory.join(filename);
+        let staging = directory.join(format!(
+            "{PREVIEW_FILENAME_PREFIX}stage-{}-{sequence}{PREVIEW_STAGING_SUFFIX}",
+            std::process::id()
+        ));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -54,7 +141,7 @@ pub fn save_temporary_image(
             options.mode(0o600);
         }
 
-        let mut file = match options.open(&destination) {
+        let mut file = match options.open(&staging) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.into()),
@@ -66,10 +153,12 @@ pub fn save_temporary_image(
         drop(file);
 
         if let Err(error) = result {
-            let _ = fs::remove_file(&destination);
+            let _ = fs::remove_file(&staging);
             return Err(error.into());
         }
-        return Ok(destination);
+        return Ok(PreparedPreview {
+            staging_path: staging,
+        });
     }
 
     Err(io::Error::new(
@@ -77,6 +166,83 @@ pub fn save_temporary_image(
         "could not allocate a unique temporary preview filename",
     )
     .into())
+}
+
+fn allocate_preview_destination(directory: &Path) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    for _ in 0..TEMPORARY_FILENAME_ATTEMPTS {
+        let sequence = TEMPORARY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let destination = directory.join(format!(
+            "{PREVIEW_FILENAME_PREFIX}{timestamp:020}-{}-{sequence}.png",
+            std::process::id()
+        ));
+        if !destination.exists() {
+            return Ok(destination);
+        }
+    }
+    Err(io::Error::new(
+        ErrorKind::AlreadyExists,
+        "could not allocate a unique published preview filename",
+    )
+    .into())
+}
+
+fn remove_staging_files(directory: &Path) -> Result<(), Box<dyn Error + Send + Sync>> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let is_staging = entry.file_type()?.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(PREVIEW_FILENAME_PREFIX)
+                        && name.ends_with(PREVIEW_STAGING_SUFFIX)
+                });
+        if is_staging {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rotate_preview_cache_in(directory: &Path) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut published = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let is_preview = entry.file_type()?.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(PREVIEW_FILENAME_PREFIX) && name.ends_with(".png")
+                });
+        if is_preview {
+            published.push(path);
+        }
+    }
+
+    // The filename starts with a fixed-width nanosecond timestamp and a
+    // per-process counter, so lexical order is publication order even when
+    // metadata timestamp precision is coarse.
+    published.sort_unstable();
+    let remove_count = published.len().saturating_sub(PREVIEW_CACHE_LIMIT);
+    for path in published.into_iter().take(remove_count) {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 /// Return the directory used for saved screenshots without creating it,
@@ -270,8 +436,9 @@ fn restore_escaped(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_pictures_line, read_pictures_directory, resolve_configured_directory_from,
-        save_image_in, save_image_with_directory, save_temporary_image, screenshot_directory_for,
+        parse_pictures_line, prepare_temporary_image_in, publish_temporary_image,
+        read_pictures_directory, resolve_configured_directory_from, rotate_preview_cache_in,
+        save_image_in, save_image_with_directory, screenshot_directory_for,
     };
     use crate::image::RgbaImage;
     use std::fs;
@@ -465,9 +632,13 @@ mod tests {
     #[test]
     fn temporary_preview_writes_private_png() {
         let image = sample_image();
-        let path = save_temporary_image(&image).expect("save temporary preview");
+        let directory = TempDirectory::new();
+        let prepared = prepare_temporary_image_in(directory.path(), &image)
+            .expect("prepare temporary preview");
+        assert!(prepared.staging_path.is_file());
+        let path = publish_temporary_image(prepared).expect("publish temporary preview");
 
-        assert!(path.starts_with(std::env::temp_dir()));
+        assert!(path.starts_with(directory.path()));
         assert!(path
             .file_name()
             .and_then(|name| name.to_str())
@@ -476,7 +647,56 @@ mod tests {
             fs::read(&path).expect("read temporary preview")[..8],
             [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
 
         fs::remove_file(path).expect("remove temporary preview");
+    }
+
+    #[test]
+    fn preview_rotation_keeps_only_the_newest_five_owned_pngs() {
+        let directory = TempDirectory::new();
+        for index in 0..7 {
+            fs::write(
+                directory.path().join(format!(
+                    ".snipchord-preview-000000000000000000{index}-test.png"
+                )),
+                [0x89, b'P', b'N', b'G'],
+            )
+            .expect("write preview fixture");
+        }
+        fs::write(
+            directory.path().join("unrelated.png"),
+            [0x89, b'P', b'N', b'G'],
+        )
+        .expect("write unrelated fixture");
+
+        rotate_preview_cache_in(directory.path()).expect("rotate preview cache");
+
+        let mut remaining: Vec<_> = fs::read_dir(directory.path())
+            .expect("read preview cache")
+            .map(|entry| entry.expect("read preview entry").file_name())
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining.len(), 6);
+        assert!(remaining.iter().any(|name| name == "unrelated.png"));
+        for index in 0..2 {
+            assert!(!remaining.iter().any(|name| {
+                name.to_string_lossy()
+                    .contains(&format!("000000000000000000{index}-test"))
+            }));
+        }
+        for index in 2..7 {
+            assert!(remaining.iter().any(|name| {
+                name.to_string_lossy()
+                    .contains(&format!("000000000000000000{index}-test"))
+            }));
+        }
     }
 }
