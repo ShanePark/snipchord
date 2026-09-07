@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+launcher_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+binary="$launcher_dir/../target/release/snipchord"
+if [[ ! -x "$binary" ]]; then
+    echo "SnipChord release binary is missing: $binary" >&2
+    echo "Build it first with: cargo build --release" >&2
+    exit 127
+fi
+exec "$binary" "$@"

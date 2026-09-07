@@ -1,0 +1,1328 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-07T06:50:19.691591+00:00",
+  "iterations_requested": 20,
+  "keyboard_hold_ms": 150,
+  "python": "3.12.3",
+  "tools": {
+    "xdotool": "xdotool version 3.20160805.1"
+  },
+  "candidates": {
+    "baseline": {
+      "path": "/tmp/snipchord-latency-lab/baseline",
+      "sha256": "990528c8acf96eb306052a52d38de3cead8c860b62e02369c717e6981b75f560",
+      "size_bytes": 999824
+    },
+    "no-dim-redraw-final": {
+      "path": "/tmp/snipchord-latency-lab/no-dim-redraw-final",
+      "sha256": "5bb929491834d3c2920434a50e7ac78a7f51d05fe4b4d99ff53aaa5bd7f647bd",
+      "size_bytes": 986912
+    }
+  },
+  "measurement_limits": [
+    "XFIXES and MapNotify are server-side event delivery times, not monitor presentation times.",
+    "selection_input_ready is an internal fallback marker and is never reported as physical cursor visibility.",
+    "The XTEST gesture starts after the internal marker when available, otherwise after a full-screen map signal.",
+    "The contention condition holds a foreign keyboard grab; it is a deterministic fixture, not a claim about a particular desktop compositor."
+  ],
+  "runs": [
+    {
+      "candidate": "baseline",
+      "binary": "/tmp/snipchord-latency-lab/baseline",
+      "xvfb": "/home/shane/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/plugins/remote-dev-server/selfcontained/bin/Xvfb",
+      "display": ":103",
+      "size": [
+        5560,
+        1920
+      ],
+      "condition": "warm",
+      "gesture_policy": "early-marker",
+      "xfixes_selected": true,
+      "xfixes_event_samples": 0,
+      "iterations_requested": 20,
+      "iterations_completed": 20,
+      "samples": [
+        {
+          "launch_to_command_return_ms": 4.773,
+          "launch_to_cursor_signal_ms": 3.743,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 3.743,
+          "launch_to_overlay_map_ms": 110.793,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.874,
+          "launch_to_capture_complete_ms": 292.428,
+          "overlay_map_to_gesture_ms": -105.918,
+          "gesture_to_capture_complete_ms": 287.554,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291473,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.325,
+          "launch_to_cursor_signal_ms": 2.586,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.586,
+          "launch_to_overlay_map_ms": 131.848,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.38,
+          "launch_to_capture_complete_ms": 299.629,
+          "overlay_map_to_gesture_ms": -127.468,
+          "gesture_to_capture_complete_ms": 295.249,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291484,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.316,
+          "launch_to_cursor_signal_ms": 2.63,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.63,
+          "launch_to_overlay_map_ms": 144.733,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.369,
+          "launch_to_capture_complete_ms": 340.431,
+          "overlay_map_to_gesture_ms": -140.364,
+          "gesture_to_capture_complete_ms": 336.062,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291495,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.792,
+          "launch_to_cursor_signal_ms": 1.673,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.673,
+          "launch_to_overlay_map_ms": 139.51,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.822,
+          "launch_to_capture_complete_ms": null,
+          "overlay_map_to_gesture_ms": -137.688,
+          "gesture_to_capture_complete_ms": null,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291506,
+          "capture_dimensions": null,
+          "gesture_outcome": "capture_timeout",
+          "output_lines": [
+            "selection_input_ready"
+          ],
+          "reset_after_failure": false,
+          "daemon_restarted_after_failure": true
+        },
+        {
+          "launch_to_command_return_ms": 4.442,
+          "launch_to_cursor_signal_ms": 2.535,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.535,
+          "launch_to_overlay_map_ms": 123.109,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.499,
+          "launch_to_capture_complete_ms": 313.156,
+          "overlay_map_to_gesture_ms": -118.611,
+          "gesture_to_capture_complete_ms": 308.657,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291473,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 3.821,
+          "launch_to_cursor_signal_ms": 2.252,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.252,
+          "launch_to_overlay_map_ms": 136.91,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 3.905,
+          "launch_to_capture_complete_ms": null,
+          "overlay_map_to_gesture_ms": -133.005,
+          "gesture_to_capture_complete_ms": null,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291484,
+          "capture_dimensions": null,
+          "gesture_outcome": "capture_timeout",
+          "output_lines": [
+            "selection_input_ready"
+          ],
+          "reset_after_failure": false,
+          "daemon_restarted_after_failure": true
+        },
+        {
+          "launch_to_command_return_ms": 4.704,
+          "launch_to_cursor_signal_ms": 3.817,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 3.817,
+          "launch_to_overlay_map_ms": 131.448,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.753,
+          "launch_to_capture_complete_ms": null,
+          "overlay_map_to_gesture_ms": -126.695,
+          "gesture_to_capture_complete_ms": null,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291473,
+          "capture_dimensions": null,
+          "gesture_outcome": "capture_timeout",
+          "output_lines": [
+            "selection_input_ready"
+          ],
+          "reset_after_failure": false,
+          "daemon_restarted_after_failure": true
+        },
+        {
+          "launch_to_command_return_ms": 3.219,
+          "launch_to_cursor_signal_ms": 3.338,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 3.338,
+          "launch_to_overlay_map_ms": 114.884,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 3.631,
+          "launch_to_capture_complete_ms": 279.696,
+          "overlay_map_to_gesture_ms": -111.253,
+          "gesture_to_capture_complete_ms": 276.065,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291473,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.537,
+          "launch_to_cursor_signal_ms": 3.46,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 3.46,
+          "launch_to_overlay_map_ms": 124.87,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.646,
+          "launch_to_capture_complete_ms": 275.121,
+          "overlay_map_to_gesture_ms": -120.224,
+          "gesture_to_capture_complete_ms": 270.475,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291484,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.675,
+          "launch_to_cursor_signal_ms": 1.481,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.481,
+          "launch_to_overlay_map_ms": 127.346,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.7,
+          "launch_to_capture_complete_ms": null,
+          "overlay_map_to_gesture_ms": -125.646,
+          "gesture_to_capture_complete_ms": null,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291495,
+          "capture_dimensions": null,
+          "gesture_outcome": "capture_timeout",
+          "output_lines": [
+            "selection_input_ready"
+          ],
+          "reset_after_failure": false,
+          "daemon_restarted_after_failure": true
+        },
+        {
+          "launch_to_command_return_ms": 9.414,
+          "launch_to_cursor_signal_ms": 7.373,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 7.373,
+          "launch_to_overlay_map_ms": 119.22,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 9.614,
+          "launch_to_capture_complete_ms": 274.907,
+          "overlay_map_to_gesture_ms": -109.606,
+          "gesture_to_capture_complete_ms": 265.293,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291473,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 2.096,
+          "launch_to_cursor_signal_ms": 2.164,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.164,
+          "launch_to_overlay_map_ms": 126.123,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 2.6,
+          "launch_to_capture_complete_ms": 316.88,
+          "overlay_map_to_gesture_ms": -123.523,
+          "gesture_to_capture_complete_ms": 314.281,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291484,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.542,
+          "launch_to_cursor_signal_ms": 2.757,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.757,
+          "launch_to_overlay_map_ms": 139.066,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.622,
+          "launch_to_capture_complete_ms": null,
+          "overlay_map_to_gesture_ms": -134.443,
+          "gesture_to_capture_complete_ms": null,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291495,
+          "capture_dimensions": null,
+          "gesture_outcome": "capture_timeout",
+          "output_lines": [
+            "selection_input_ready"
+          ],
+          "reset_after_failure": false,
+          "daemon_restarted_after_failure": true
+        },
+        {
+          "launch_to_command_return_ms": 1.653,
+          "launch_to_cursor_signal_ms": 1.445,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.445,
+          "launch_to_overlay_map_ms": 98.507,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.678,
+          "launch_to_capture_complete_ms": 245.711,
+          "overlay_map_to_gesture_ms": -96.829,
+          "gesture_to_capture_complete_ms": 244.033,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291473,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.074,
+          "launch_to_cursor_signal_ms": 2.076,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.076,
+          "launch_to_overlay_map_ms": 105.756,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.118,
+          "launch_to_capture_complete_ms": 218.382,
+          "overlay_map_to_gesture_ms": -101.638,
+          "gesture_to_capture_complete_ms": 214.264,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291484,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.719,
+          "launch_to_cursor_signal_ms": 1.445,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.445,
+          "launch_to_overlay_map_ms": 78.589,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.747,
+          "launch_to_capture_complete_ms": 152.913,
+          "overlay_map_to_gesture_ms": -76.843,
+          "gesture_to_capture_complete_ms": 151.166,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291495,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.584,
+          "launch_to_cursor_signal_ms": 1.217,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.217,
+          "launch_to_overlay_map_ms": 74.403,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.605,
+          "launch_to_capture_complete_ms": 156.095,
+          "overlay_map_to_gesture_ms": -72.799,
+          "gesture_to_capture_complete_ms": 154.49,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291506,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.633,
+          "launch_to_cursor_signal_ms": 1.401,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.401,
+          "launch_to_overlay_map_ms": 82.804,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.653,
+          "launch_to_capture_complete_ms": 166.163,
+          "overlay_map_to_gesture_ms": -81.151,
+          "gesture_to_capture_complete_ms": 164.51,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291517,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.542,
+          "launch_to_cursor_signal_ms": 1.429,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.429,
+          "launch_to_overlay_map_ms": 81.851,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.567,
+          "launch_to_capture_complete_ms": 162.06,
+          "overlay_map_to_gesture_ms": -80.284,
+          "gesture_to_capture_complete_ms": 160.493,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291528,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.527,
+          "launch_to_cursor_signal_ms": 1.475,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.475,
+          "launch_to_overlay_map_ms": 79.9,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.566,
+          "launch_to_capture_complete_ms": 163.743,
+          "overlay_map_to_gesture_ms": -78.334,
+          "gesture_to_capture_complete_ms": 162.177,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291539,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        }
+      ],
+      "success_count": 15,
+      "failure_count": 5,
+      "summary": {
+        "launch_to_cursor_signal_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 2.208,
+          "p95_ms": 3.995,
+          "min_ms": 1.217,
+          "max_ms": 7.373
+        },
+        "launch_to_xfixes_cursor_notify_ms": {
+          "n": 0,
+          "missing": 20,
+          "median_ms": null,
+          "p95_ms": null,
+          "min_ms": null,
+          "max_ms": null
+        },
+        "launch_to_ready_marker_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 2.208,
+          "p95_ms": 3.995,
+          "min_ms": 1.217,
+          "max_ms": 7.373
+        },
+        "launch_to_overlay_map_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 121.165,
+          "p95_ms": 139.771,
+          "min_ms": 74.403,
+          "max_ms": 144.733
+        },
+        "launch_to_overlay_viewable_ms": {
+          "n": 0,
+          "missing": 20,
+          "median_ms": null,
+          "p95_ms": null,
+          "min_ms": null,
+          "max_ms": null
+        },
+        "launch_to_gesture_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 3.768,
+          "p95_ms": 5.111,
+          "min_ms": 1.566,
+          "max_ms": 9.614
+        },
+        "launch_to_capture_complete_ms": {
+          "n": 15,
+          "missing": 5,
+          "median_ms": 274.907,
+          "p95_ms": 323.945,
+          "min_ms": 152.913,
+          "max_ms": 340.431
+        },
+        "gesture_to_capture_complete_ms": {
+          "n": 15,
+          "missing": 5,
+          "median_ms": 265.293,
+          "p95_ms": 320.815,
+          "min_ms": 151.166,
+          "max_ms": 336.062
+        },
+        "gesture_to_server_border_pixel_ms": {
+          "n": 0,
+          "missing": 20,
+          "median_ms": null,
+          "p95_ms": null,
+          "min_ms": null,
+          "max_ms": null
+        }
+      }
+    },
+    {
+      "candidate": "no-dim-redraw-final",
+      "binary": "/tmp/snipchord-latency-lab/no-dim-redraw-final",
+      "xvfb": "/home/shane/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/plugins/remote-dev-server/selfcontained/bin/Xvfb",
+      "display": ":103",
+      "size": [
+        5560,
+        1920
+      ],
+      "condition": "warm",
+      "gesture_policy": "early-marker",
+      "xfixes_selected": true,
+      "xfixes_event_samples": 0,
+      "iterations_requested": 20,
+      "iterations_completed": 20,
+      "samples": [
+        {
+          "launch_to_command_return_ms": 3.797,
+          "launch_to_cursor_signal_ms": 1.66,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.66,
+          "launch_to_overlay_map_ms": 33.437,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 3.865,
+          "launch_to_capture_complete_ms": 137.641,
+          "overlay_map_to_gesture_ms": -29.572,
+          "gesture_to_capture_complete_ms": 133.776,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291469,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.839,
+          "launch_to_cursor_signal_ms": 2.004,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.004,
+          "launch_to_overlay_map_ms": 44.725,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 2.186,
+          "launch_to_capture_complete_ms": 134.853,
+          "overlay_map_to_gesture_ms": -42.539,
+          "gesture_to_capture_complete_ms": 132.667,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291476,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.038,
+          "launch_to_cursor_signal_ms": 1.969,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.969,
+          "launch_to_overlay_map_ms": 48.688,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.09,
+          "launch_to_capture_complete_ms": 149.235,
+          "overlay_map_to_gesture_ms": -44.598,
+          "gesture_to_capture_complete_ms": 145.146,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291483,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.585,
+          "launch_to_cursor_signal_ms": 1.427,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.427,
+          "launch_to_overlay_map_ms": 40.351,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.608,
+          "launch_to_capture_complete_ms": 125.596,
+          "overlay_map_to_gesture_ms": -38.743,
+          "gesture_to_capture_complete_ms": 123.988,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291490,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.143,
+          "launch_to_cursor_signal_ms": 2.016,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.016,
+          "launch_to_overlay_map_ms": 41.854,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.219,
+          "launch_to_capture_complete_ms": 113.586,
+          "overlay_map_to_gesture_ms": -37.635,
+          "gesture_to_capture_complete_ms": 109.367,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291497,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.111,
+          "launch_to_cursor_signal_ms": 2.211,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.211,
+          "launch_to_overlay_map_ms": 42.905,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.209,
+          "launch_to_capture_complete_ms": 156.583,
+          "overlay_map_to_gesture_ms": -38.696,
+          "gesture_to_capture_complete_ms": 152.374,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291504,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.259,
+          "launch_to_cursor_signal_ms": 2.537,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.537,
+          "launch_to_overlay_map_ms": 50.685,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.291,
+          "launch_to_capture_complete_ms": 134.86,
+          "overlay_map_to_gesture_ms": -46.394,
+          "gesture_to_capture_complete_ms": 130.569,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291511,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.753,
+          "launch_to_cursor_signal_ms": 1.624,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.624,
+          "launch_to_overlay_map_ms": 38.491,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.804,
+          "launch_to_capture_complete_ms": 101.728,
+          "overlay_map_to_gesture_ms": -36.687,
+          "gesture_to_capture_complete_ms": 99.924,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291518,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.33,
+          "launch_to_cursor_signal_ms": 2.659,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.659,
+          "launch_to_overlay_map_ms": 38.259,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.364,
+          "launch_to_capture_complete_ms": 129.859,
+          "overlay_map_to_gesture_ms": -33.895,
+          "gesture_to_capture_complete_ms": 125.495,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291525,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 3.951,
+          "launch_to_cursor_signal_ms": 1.934,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.934,
+          "launch_to_overlay_map_ms": 43.608,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.004,
+          "launch_to_capture_complete_ms": 123.623,
+          "overlay_map_to_gesture_ms": -39.604,
+          "gesture_to_capture_complete_ms": 119.619,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291532,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.526,
+          "launch_to_cursor_signal_ms": 1.303,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.303,
+          "launch_to_overlay_map_ms": 37.298,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.55,
+          "launch_to_capture_complete_ms": 100.339,
+          "overlay_map_to_gesture_ms": -35.748,
+          "gesture_to_capture_complete_ms": 98.789,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291539,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.569,
+          "launch_to_cursor_signal_ms": 1.205,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.205,
+          "launch_to_overlay_map_ms": 36.367,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.587,
+          "launch_to_capture_complete_ms": 109.505,
+          "overlay_map_to_gesture_ms": -34.779,
+          "gesture_to_capture_complete_ms": 107.918,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291546,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.002,
+          "launch_to_cursor_signal_ms": 1.947,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.947,
+          "launch_to_overlay_map_ms": 42.732,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.094,
+          "launch_to_capture_complete_ms": 130.852,
+          "overlay_map_to_gesture_ms": -38.638,
+          "gesture_to_capture_complete_ms": 126.757,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291553,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 2.158,
+          "launch_to_cursor_signal_ms": 2.079,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.079,
+          "launch_to_overlay_map_ms": 41.973,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 2.187,
+          "launch_to_capture_complete_ms": 120.321,
+          "overlay_map_to_gesture_ms": -39.786,
+          "gesture_to_capture_complete_ms": 118.134,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291560,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.771,
+          "launch_to_cursor_signal_ms": 1.419,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.419,
+          "launch_to_overlay_map_ms": 42.579,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.791,
+          "launch_to_capture_complete_ms": 120.281,
+          "overlay_map_to_gesture_ms": -40.788,
+          "gesture_to_capture_complete_ms": 118.49,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291567,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.367,
+          "launch_to_cursor_signal_ms": 2.619,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.619,
+          "launch_to_overlay_map_ms": 42.631,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.412,
+          "launch_to_capture_complete_ms": 127.336,
+          "overlay_map_to_gesture_ms": -38.219,
+          "gesture_to_capture_complete_ms": 122.924,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291574,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 4.061,
+          "launch_to_cursor_signal_ms": 2.425,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 2.425,
+          "launch_to_overlay_map_ms": 39.527,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 4.092,
+          "launch_to_capture_complete_ms": 111.499,
+          "overlay_map_to_gesture_ms": -35.435,
+          "gesture_to_capture_complete_ms": 107.408,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291581,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 1.509,
+          "launch_to_cursor_signal_ms": 1.204,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.204,
+          "launch_to_overlay_map_ms": 40.335,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 1.527,
+          "launch_to_capture_complete_ms": 105.83,
+          "overlay_map_to_gesture_ms": -38.808,
+          "gesture_to_capture_complete_ms": 104.303,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291588,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 3.933,
+          "launch_to_cursor_signal_ms": 1.859,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.859,
+          "launch_to_overlay_map_ms": 37.363,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 3.958,
+          "launch_to_capture_complete_ms": 97.301,
+          "overlay_map_to_gesture_ms": -33.404,
+          "gesture_to_capture_complete_ms": 93.343,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291595,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        },
+        {
+          "launch_to_command_return_ms": 2.002,
+          "launch_to_cursor_signal_ms": 1.671,
+          "launch_to_xfixes_cursor_notify_ms": null,
+          "launch_to_ready_marker_ms": 1.671,
+          "launch_to_overlay_map_ms": 37.009,
+          "launch_to_overlay_viewable_ms": null,
+          "launch_to_gesture_ms": 2.055,
+          "launch_to_capture_complete_ms": 96.895,
+          "overlay_map_to_gesture_ms": -34.955,
+          "gesture_to_capture_complete_ms": 94.841,
+          "gesture_to_server_border_pixel_ms": null,
+          "render_probe_status": null,
+          "render_pixel_before": null,
+          "render_pixel_after": null,
+          "cursor_signal": "selection_input_ready",
+          "overlay_signal": "MapNotify",
+          "overlay_window_id": 6291602,
+          "capture_dimensions": [
+            200,
+            150
+          ],
+          "gesture_outcome": "capture_complete",
+          "output_lines": [
+            "selection_input_ready",
+            "capture_complete width=200 height=150 demo=false"
+          ]
+        }
+      ],
+      "success_count": 20,
+      "failure_count": 0,
+      "summary": {
+        "launch_to_cursor_signal_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 1.941,
+          "p95_ms": 2.621,
+          "min_ms": 1.204,
+          "max_ms": 2.659
+        },
+        "launch_to_xfixes_cursor_notify_ms": {
+          "n": 0,
+          "missing": 20,
+          "median_ms": null,
+          "p95_ms": null,
+          "min_ms": null,
+          "max_ms": null
+        },
+        "launch_to_ready_marker_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 1.941,
+          "p95_ms": 2.621,
+          "min_ms": 1.204,
+          "max_ms": 2.659
+        },
+        "launch_to_overlay_map_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 41.102,
+          "p95_ms": 48.788,
+          "min_ms": 33.437,
+          "max_ms": 50.685
+        },
+        "launch_to_overlay_viewable_ms": {
+          "n": 0,
+          "missing": 20,
+          "median_ms": null,
+          "p95_ms": null,
+          "min_ms": null,
+          "max_ms": null
+        },
+        "launch_to_gesture_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 3.912,
+          "p95_ms": 4.366,
+          "min_ms": 1.527,
+          "max_ms": 4.412
+        },
+        "launch_to_capture_complete_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 121.972,
+          "p95_ms": 149.602,
+          "min_ms": 96.895,
+          "max_ms": 156.583
+        },
+        "gesture_to_capture_complete_ms": {
+          "n": 20,
+          "missing": 0,
+          "median_ms": 119.054,
+          "p95_ms": 145.507,
+          "min_ms": 93.343,
+          "max_ms": 152.374
+        },
+        "gesture_to_server_border_pixel_ms": {
+          "n": 0,
+          "missing": 20,
+          "median_ms": null,
+          "p95_ms": null,
+          "min_ms": null,
+          "max_ms": null
+        }
+      }
+    }
+  ]
+}

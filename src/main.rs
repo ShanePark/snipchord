@@ -1,0 +1,19 @@
+//! SnipChord's small native X11 executable.
+
+mod app;
+mod clipboard;
+mod geometry;
+mod image;
+mod server_capture;
+mod settings;
+mod storage;
+mod ui;
+mod window_capture;
+mod x11;
+
+use std::env;
+
+fn main() {
+    let args: Vec<_> = env::args_os().collect();
+    std::process::exit(app::run(&args));
+}
