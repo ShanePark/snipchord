@@ -25,6 +25,9 @@
 - Do not claim completion without relevant verification. State exactly what was not verified and why.
 - Distinguish failures caused by the current change from pre-existing failures.
 - Report what changed, the checks run and their results, unverified areas, and remaining risks or assumptions.
+- After completing and verifying application changes, build and install the updated executable, then restart SnipChord yourself: run `~/.local/bin/snipchord --quit`, wait for the old process to exit, and launch `~/.local/bin/snipchord --daemon` in the background.
+- This restart is authorized as part of development completion. Do not ask the user to run the quit command or request confirmation for a routine restart. Preserve settings and shortcuts, and preserve clipboard contents where possible without deferring the restart to the user.
+- Verify that the new process is running the installed build before reporting completion. Report any restart failure explicitly. Documentation-only changes do not require a build or restart.
 
 ## Git
 

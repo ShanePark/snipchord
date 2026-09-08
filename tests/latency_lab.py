@@ -20,8 +20,9 @@ which are often conflated:
   completion line.  Their difference is the usable input/capture phase.
 
 No phase measures compositor presentation or the physical keyboard-to-server
-delay.  Those require a live desktop and hardware instrumentation.  Use the
-``docs/latency-measurement.md`` procedure for that boundary.
+delay.  Those require a live desktop and hardware instrumentation.  Use this
+script's ``--help`` output and the examples below to reproduce the private-X11
+measurements while keeping that boundary explicit.
 
 Examples::
 
