@@ -27,7 +27,9 @@ use crate::clipboard::Clipboard;
 use crate::geometry::Rect;
 use crate::image::{capture_root_with_size, RgbaImage};
 use crate::settings::{read_settings, write_settings, Settings};
+use crate::shortcuts;
 use crate::storage;
+use crate::tray::TrayRuntime;
 use crate::ui::Ui;
 use crate::window_capture::{WindowPicker, WindowTarget};
 use crate::x11::{Instance, InstanceClaim, X11Context};
@@ -58,6 +60,11 @@ const COMMAND_REGION_CLIPBOARD: u32 = 6;
 const COMMAND_REGION_SAVE: u32 = 7;
 const COMMAND_FULLSCREEN_CLIPBOARD: u32 = 8;
 const COMMAND_FULLSCREEN_SAVE: u32 = 9;
+const COMMAND_ABOUT: u32 = 10;
+
+/// The project's public source repository, shown by the tray About item and
+/// the native About window.
+pub const REPOSITORY_URL: &str = "https://github.com/ShanePark/snipchord";
 
 /// User-visible actions emitted by the native UI.
 ///
@@ -82,8 +89,8 @@ pub enum UiAction {
     Close,
     /// The user clicked the completed capture thumbnail.
     OpenPreview,
-    Quit,
-    CaptureRegion,
+    /// The user clicked the repository link in About.
+    OpenRepository,
     SettingsChanged(Settings),
 }
 
@@ -97,6 +104,7 @@ pub enum Mode {
     FullscreenClipboard,
     FullscreenSave,
     Preferences,
+    About,
     Daemon,
     Quit,
     Demo,
@@ -137,6 +145,7 @@ impl Mode {
             Self::FullscreenClipboard => Some(COMMAND_FULLSCREEN_CLIPBOARD),
             Self::FullscreenSave => Some(COMMAND_FULLSCREEN_SAVE),
             Self::Preferences => Some(COMMAND_PREFERENCES),
+            Self::About => Some(COMMAND_ABOUT),
             Self::Daemon | Self::Quit => None,
             Self::Demo => Some(COMMAND_DEMO),
         }
@@ -270,6 +279,7 @@ pub fn parse_args(args: &[OsString]) -> Result<ParsedCommand, CliError> {
                 continue;
             }
             Some("--preferences") => Mode::Preferences,
+            Some("--about") => Mode::About,
             Some("--daemon") => Mode::Daemon,
             Some("--quit") => Mode::Quit,
             Some("--demo") => Mode::Demo,
@@ -349,6 +359,7 @@ fn mode_name(mode: Mode) -> &'static str {
         Mode::FullscreenClipboard => "--fullscreen --clipboard",
         Mode::FullscreenSave => "--fullscreen --save",
         Mode::Preferences => "--preferences",
+        Mode::About => "--about",
         Mode::Daemon => "--daemon",
         Mode::Quit => "--quit",
         Mode::Demo => "--demo",
@@ -357,7 +368,7 @@ fn mode_name(mode: Mode) -> &'static str {
 
 pub const HELP_TEXT: &str = "SnipChord — select, capture, carry on.\n\
 Usage: snipchord [--region | --fullscreen] [--clipboard | --save]\n\
-       snipchord [--preferences | --daemon | --demo | --quit]\n\
+       snipchord [--preferences | --about | --daemon | --demo | --quit]\n\
        snipchord --save-dir PATH\n\
 X11 only. Default capture: region, clipboard (plus automatic save when enabled).\n\
 --clipboard and --save select one explicit destination. --demo uses a synthetic desktop.\n\
@@ -470,6 +481,7 @@ pub struct App {
     pending_image: Option<RgbaImage>,
     pending_output: Option<OutputMode>,
     current_demo: bool,
+    tray: Option<TrayRuntime>,
     running: bool,
 }
 
@@ -524,6 +536,7 @@ impl App {
             pending_image: None,
             pending_output: None,
             current_demo: false,
+            tray: None,
             running: true,
         })
     }
@@ -531,6 +544,10 @@ impl App {
     /// Execute the initial command and remain resident until `--quit` or a UI
     /// quit action arrives.  Cleanup runs even when an X11 request fails.
     pub fn run(&mut self, mode: Mode) -> AppResult<()> {
+        // D-Bus startup runs independently of the initial capture.  A tray is
+        // useful for a resident daemon, but a missing or late panel must never
+        // delay the first screenshot.
+        self.tray = TrayRuntime::start();
         let result = self.dispatch_mode(mode).and_then(|()| {
             if self.running {
                 self.event_loop()
@@ -553,6 +570,7 @@ impl App {
             | Mode::FullscreenClipboard
             | Mode::FullscreenSave => unreachable!("capture modes were handled above"),
             Mode::Preferences => self.show_preferences(),
+            Mode::About => self.show_about(),
             Mode::Daemon => Ok(()),
             Mode::Quit => {
                 self.running = false;
@@ -932,8 +950,17 @@ impl App {
         // blocked by the stale full-screen image.
         self.pending_image = None;
         self.pending_output = None;
+        let shortcuts = shortcuts::configured_shortcuts();
         self.ui
-            .show_preferences(&self.context, self.settings.clone())
+            .show_preferences(&self.context, self.settings.clone(), shortcuts)
+    }
+
+    fn show_about(&mut self) -> AppResult<()> {
+        // Opening an informational surface cancels any pending command state;
+        // the UI owns the transient X11 windows and closes overlapping ones.
+        self.pending_image = None;
+        self.pending_output = None;
+        self.ui.show_about(&self.context)
     }
 
     fn dispatch_event(&mut self, event: Event) -> AppResult<()> {
@@ -984,6 +1011,9 @@ impl App {
                     |app| app.show_preferences(),
                     "Could not open preferences",
                 ),
+                COMMAND_ABOUT => {
+                    self.run_resident_action(|app| app.show_about(), "Could not open About")
+                }
                 COMMAND_QUIT => self.running = false,
                 COMMAND_DEMO => self.run_resident_action(
                     |app| app.begin_capture(false, true, OutputMode::Legacy),
@@ -1031,15 +1061,10 @@ impl App {
                 }
                 Ok(())
             }
-            UiAction::Quit => {
-                self.running = false;
-                Ok(())
-            }
-            UiAction::CaptureRegion => {
-                self.run_resident_action(
-                    |app| app.begin_capture(false, false, OutputMode::Legacy),
-                    "Capture failed",
-                );
+            UiAction::OpenRepository => {
+                if let Err(error) = open_with_default_browser(REPOSITORY_URL) {
+                    self.notify("Could not open GitHub", &error.to_string());
+                }
                 Ok(())
             }
             UiAction::SettingsChanged(settings) => {
@@ -1195,6 +1220,9 @@ impl App {
 
     fn shutdown(&mut self, primary: AppResult<()>) -> AppResult<()> {
         self.finish_preview_preparations();
+        if let Some(tray) = self.tray.take() {
+            tray.shutdown();
+        }
         let ui_result = self.ui.shutdown(&self.context);
         let clipboard_result = self.clipboard.release(&self.context.conn);
         let instance_result = self
@@ -1218,6 +1246,21 @@ fn open_with_default_image_viewer(path: &std::path::Path) -> io::Result<()> {
         .spawn()?;
     thread::Builder::new()
         .name("snipchord-xdg-open".to_owned())
+        .spawn(move || {
+            let _ = child.wait();
+        })
+        .map(|_| ())
+}
+
+fn open_with_default_browser(url: &str) -> io::Result<()> {
+    let mut child = Command::new("xdg-open")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    thread::Builder::new()
+        .name("snipchord-xdg-open-url".to_owned())
         .spawn(move || {
             let _ = child.wait();
         })
@@ -1310,7 +1353,16 @@ mod tests {
         assert!(parse_args(&args(&["snipchord", "--clipboard", "--save"])).is_err());
         assert!(parse_args(&args(&["snipchord", "--region", "--fullscreen"])).is_err());
         assert!(parse_args(&args(&["snipchord", "--preferences", "--save"])).is_err());
+        assert!(parse_args(&args(&["snipchord", "--about", "--save"])).is_err());
         assert!(parse_args(&args(&["snipchord", "--demo", "--clipboard"])).is_err());
+    }
+
+    #[test]
+    fn about_mode_is_parsed_without_capture_options() {
+        assert_eq!(
+            parse_args(&args(&["snipchord", "--about"])),
+            Ok(ParsedCommand::Mode(Mode::About))
+        );
     }
 
     #[test]

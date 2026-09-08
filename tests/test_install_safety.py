@@ -44,6 +44,17 @@ class InstallSafetyTests(unittest.TestCase):
             self.assertEqual(launcher.read_bytes(),b"user-owned")
             self.assertFalse((prefix/"share/snipchord").exists())
 
+    def test_existing_icon_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix=Path(directory)
+            icon=prefix/"share/icons/hicolor/scalable/apps/snipchord.svg"
+            icon.parent.mkdir(parents=True)
+            icon.write_bytes(b"user-owned")
+            result=subprocess.run([sys.executable,str(INSTALLER),"--prefix",str(prefix)],capture_output=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertEqual(icon.read_bytes(),b"user-owned")
+            self.assertFalse((prefix/"share/snipchord").exists())
+
     def test_binary_replacement_is_atomic_while_old_binary_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             prefix=Path(directory)

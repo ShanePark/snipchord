@@ -284,9 +284,12 @@ def main():
         parser.error("--autostart requires the default prefix")
     bundle=prefix/"share"/"snipchord"
     launcher=prefix/"bin"/"snipchord"
+    icon_path=prefix/"share"/"icons"/"hicolor"/"scalable"/"apps"/"snipchord.svg"
     marker=bundle/".snipchord-managed"
     if (os.path.lexists(bundle) and not marker.exists()) or (os.path.lexists(launcher) and not marker.exists()):
         parser.error("Refusing to overwrite an unmanaged installation")
+    if not marker.exists() and os.path.lexists(icon_path):
+        parser.error("Refusing to overwrite an unmanaged icon")
     desktop_path = prefix/"share"/"applications"/"io.github.shane.snipchord.desktop"
     autostart_path = Path(os.environ.get("XDG_CONFIG_HOME",Path.home()/".config"))/"autostart"/"io.github.shane.snipchord.desktop"
     if not marker.exists() and (os.path.lexists(desktop_path) or (args.autostart and os.path.lexists(autostart_path))):
@@ -299,6 +302,8 @@ def main():
         )
     bundle.mkdir(parents=True,exist_ok=True)
     shutil.copy2(repo/"assets"/"snipchord.svg",bundle/"snipchord.svg")
+    icon_path.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(repo/"assets"/"snipchord.svg",icon_path)
     marker.write_text("Managed by SnipChord tools/install.py\n")
     launcher.parent.mkdir(parents=True,exist_ok=True)
     install_binary(binary_source, launcher)

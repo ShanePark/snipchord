@@ -18,6 +18,8 @@ class InstallTests(unittest.TestCase):
             self.assertTrue(launcher.stat().st_mode & 0o111)
             version=subprocess.check_output([str(launcher),"--version"],text=True)
             self.assertEqual(version.strip(),"SnipChord 0.1.0")
+            icon=prefix/"share/icons/hicolor/scalable/apps/snipchord.svg"
+            self.assertEqual(icon.read_bytes(),(ROOT/"assets/snipchord.svg").read_bytes())
             subprocess.run(["desktop-file-validate",str(prefix/"share/applications/io.github.shane.snipchord.desktop")],check=True)
 
     def test_refuses_unmanaged_bundle(self):

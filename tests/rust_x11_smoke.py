@@ -417,6 +417,41 @@ def _window_geometries(env: Mapping[str, str]) -> list[dict[str, int | str]]:
     return windows
 
 
+def _assert_window_on_screen(
+    window: Mapping[str, int | str],
+    root_size: tuple[int, int],
+    name: str,
+) -> None:
+    """Reject a dialog geometry that would be clipped by the test desktop."""
+    x = int(window["x"])
+    y = int(window["y"])
+    width = int(window["width"])
+    height = int(window["height"])
+    root_width, root_height = root_size
+    if width <= 0 or height <= 0:
+        raise SmokeError(f"{name} has invalid geometry {window!r}")
+    if x < 0 or y < 0 or x + width > root_width or y + height > root_height:
+        raise SmokeError(
+            f"{name} is outside the test desktop: geometry={window!r}, root={root_size!r}"
+        )
+
+
+def _assert_window_centered(
+    window: Mapping[str, int | str],
+    root_size: tuple[int, int],
+    name: str,
+    tolerance: int = 2,
+) -> None:
+    """Verify a transient surface is centered on the private test monitor."""
+    root_width, root_height = root_size
+    expected_x = (root_width - int(window["width"])) // 2
+    expected_y = (root_height - int(window["height"])) // 2
+    if abs(int(window["x"]) - expected_x) > tolerance or abs(int(window["y"]) - expected_y) > tolerance:
+        raise SmokeError(
+            f"{name} is not centered: geometry={window!r}, expected=({expected_x},{expected_y})"
+        )
+
+
 def _wait_for_window_geometry(
     env: Mapping[str, str],
     predicate,
@@ -536,6 +571,23 @@ def _capture_window_png(env: Mapping[str, str], window_id: str, destination: Pat
     _run(["convert", "xwd:-", f"png:{destination}"], env, timeout=8, stdin=raw)
 
 
+def _ocr_png(env: Mapping[str, str], image: Path) -> str:
+    """Read optional visual-QA text without making OCR a runtime requirement."""
+    if shutil.which("tesseract") is None:
+        return ""
+    result = _run(
+        ["tesseract", str(image), "stdout", "--psm", "6"],
+        env,
+        check=False,
+        timeout=12,
+    )
+    if result.returncode != 0:
+        raise SmokeError(
+            f"tesseract failed for {image}: {result.stderr.decode(errors='replace')[-500:]}"
+        )
+    return result.stdout.decode(errors="replace")
+
+
 def _xdg_open_stub(env: Mapping[str, str]) -> tuple[dict[str, str], Path]:
     """Prepend a private xdg-open stub that records the opened path."""
     directory = Path(env["XDG_RUNTIME_DIR"]) / "snipchord-xdg-open"
@@ -562,6 +614,42 @@ def _wait_for_opened_path(log: Path, timeout: float = 3) -> Path:
                 return Path(lines[-1])
         time.sleep(0.05)
     raise SmokeError(f"xdg-open was not called; log={log}")
+
+
+def _gsettings_stub(env: Mapping[str, str]) -> tuple[dict[str, str], Path]:
+    """Provide deterministic GNOME shortcut data without touching the desktop."""
+    directory = Path(env["XDG_RUNTIME_DIR"]) / "snipchord-gsettings"
+    directory.mkdir(parents=True, exist_ok=True)
+    executable = directory / "gsettings"
+    log = directory / "calls.log"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\t%s\\t%s\\n' \"${SNIPCHORD_GSETTINGS_MODE:-configured}\" \"$2\" \"$3\" >> \"$SNIPCHORD_GSETTINGS_LOG\"\n"
+        "[ \"$1\" = get ] || exit 1\n"
+        "mode=\"${SNIPCHORD_GSETTINGS_MODE:-configured}\"\n"
+        "schema=\"$2\"\n"
+        "key=\"$3\"\n"
+        "if [ \"$mode\" = fallback ]; then exit 1; fi\n"
+        "if [ \"$schema\" = org.gnome.settings-daemon.plugins.media-keys ] && [ \"$key\" = custom-keybindings ]; then\n"
+        "  if [ \"$mode\" = empty ]; then printf '%s\\n' '@as []'; else printf '%s\\n' \"['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/']\"; fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$schema\" = org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ ] && [ \"$key\" = command ]; then\n"
+        "  printf '%s\\n' \"'/home/test/.local/bin/snipchord --region --clipboard'\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$schema\" = org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ ] && [ \"$key\" = binding ]; then\n"
+        "  printf '%s\\n' \"'<Control><Alt>r'\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n"
+    )
+    executable.chmod(0o755)
+    child_env = dict(env)
+    child_env["PATH"] = f"{directory}{os.pathsep}{env.get('PATH', '')}"
+    child_env["SNIPCHORD_GSETTINGS_LOG"] = str(log)
+    child_env["SNIPCHORD_GSETTINGS_MODE"] = "configured"
+    return child_env, log
 
 
 def _temporary_preview_paths(env: Mapping[str, str]) -> set[Path]:
@@ -1799,7 +1887,13 @@ def _selection_overlay_has_no_text_badges(
     artifacts_dir: Path,
     root_size: tuple[int, int] = (DEFAULT_WIDTH, DEFAULT_HEIGHT),
 ) -> dict[str, object]:
-    """Check idle, drag, and window-pick overlays contain no text surfaces."""
+    """Check idle and region-drag overlays contain no text surfaces.
+
+    Window-pick mode has its own visual contract: the hovered window is
+    intentionally highlighted while the rest of the desktop remains intact.
+    Its artifact is still kept here for visual QA, but the strict no-paint
+    comparison belongs to ``_window_selection_capture``.
+    """
     width, height = root_size
     if width < 360 or height < 300:
         raise SmokeError("selection overlay check needs an X11 surface at least 360x300")
@@ -1865,7 +1959,11 @@ def _selection_overlay_has_no_text_badges(
         _wait_for_plain_selection_frame(env, window_id, (40, 40), source_at_pointer)
         window_pick_path = artifacts_dir / "snipchord-overlay-windowpick.png"
         _capture_window_png(env, window_id, window_pick_path)
-        results["window_pick"] = _assert_plain_selection_overlay(window_pick_path, root_size)
+        # Window-pick mode deliberately paints the hovered target to make the
+        # choice obvious.  Validate that styling together with a real child
+        # window in _window_selection_capture below; retaining this artifact
+        # here makes both overlay states available for visual review.
+        results["window_pick"] = {"artifact": str(window_pick_path)}
     finally:
         with contextlib.suppress(Exception):
             _run(["xdotool", "keyup", "space"], env, timeout=2)
@@ -2159,6 +2257,278 @@ def _selection_frame_samples(
             return tuple(image.getpixel(point) for point in points)
     except Exception as error:
         raise SmokeError(f"could not sample selection frame: {error}") from error
+
+
+def _cursor_fingerprint(env: Mapping[str, str]) -> tuple[object, ...] | None:
+    """Return a stable XFixes cursor image fingerprint when available."""
+    try:
+        from Xlib import display
+    except ImportError:
+        return None
+    connection = display.Display(env["DISPLAY"])
+    try:
+        if not connection.has_extension("XFIXES"):
+            return None
+        image = connection.xfixes_get_cursor_image(connection.screen().root).reply()
+        pixels = b"".join(struct.pack(">I", int(pixel)) for pixel in image.cursor_image)
+        return (
+            int(image.width),
+            int(image.height),
+            int(image.xhot),
+            int(image.yhot),
+            hashlib.sha256(pixels).hexdigest(),
+        )
+    except Exception:
+        return None
+    finally:
+        connection.close()
+
+
+def _wait_window_pick_tint(
+    env: Mapping[str, str],
+    window_id: str,
+    target_point: tuple[int, int],
+    target_original: tuple[int, int, int],
+    untouched_point: tuple[int, int],
+    untouched_original: tuple[int, int, int],
+    smooth_tint: bool,
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """Wait for a blue target highlight, with a stipple-safe fallback check."""
+    # Render paints every probe with the same alpha tint.  The no-Render path
+    # intentionally uses a sparse 4x4 stipple, so inspect a small patch and
+    # use its average rather than relying on one potentially untouched pixel.
+    offsets = tuple((x, y) for y in range(-6, 7, 2) for x in range(-6, 7, 2))
+    target_points = tuple((target_point[0] + x, target_point[1] + y) for x, y in offsets)
+    deadline = time.monotonic() + 3
+    observed_target = target_original
+    observed_untouched = untouched_original
+    while time.monotonic() < deadline:
+        samples = _selection_frame_samples(env, window_id, (*target_points, untouched_point))
+        target_samples = samples[:-1]
+        observed_untouched = samples[-1]
+        target_average = tuple(
+            round(sum(sample[index] for sample in target_samples) / len(target_samples))
+            for index in range(3)
+        )
+        observed_target = target_average
+        untouched_ok = max(
+            abs(observed_untouched[index] - untouched_original[index]) for index in range(3)
+        ) <= 2
+        if smooth_tint:
+            delta = tuple(
+                target_average[index] - target_original[index] for index in range(3)
+            )
+            target_ok = (
+                max(abs(value) for value in delta) >= 8
+                and delta[2] > delta[0]
+                and delta[2] > delta[1]
+                and all(
+                    max(abs(sample[index] - target_original[index]) for index in range(3)) >= 8
+                    for sample in target_samples
+                )
+            )
+        else:
+            blue_samples = [
+                sample
+                for sample in target_samples
+                if (
+                    max(abs(sample[index] - target_original[index]) for index in range(3)) >= 8
+                    and sample[2] - target_original[2] > sample[0] - target_original[0]
+                    and sample[2] - target_original[2] > sample[1] - target_original[1]
+                )
+            ]
+            average_delta = tuple(
+                target_average[index] - target_original[index] for index in range(3)
+            )
+            target_ok = (
+                len(blue_samples) >= 2
+                and average_delta[2] > average_delta[0]
+                and average_delta[2] > average_delta[1]
+            )
+        if target_ok and untouched_ok:
+            return observed_target, observed_untouched
+        time.sleep(0.01)
+    raise SmokeError(
+        "window-pick target tint did not settle while preserving the other window: "
+        f"target={observed_target}, other={observed_untouched}, expected_other={untouched_original}"
+    )
+
+
+def _window_selection_mode_transitions(
+    binary: Path,
+    env: Mapping[str, str],
+    artifacts_dir: Path | None = None,
+    root_size: tuple[int, int] = (DEFAULT_WIDTH, DEFAULT_HEIGHT),
+    smooth_tint: bool = True,
+) -> dict[str, object]:
+    """Verify target switching, Space mode exit, cursor restore, and Escape.
+
+    This is intentionally a focused interaction check separate from the
+    capture-pixel test.  It keeps two real child windows visible so a motion
+    from A to B proves that the old tint is removed before the new target is
+    highlighted.  A second Space press must return to ordinary region mode;
+    starting a drag then exposes the normal white region frame.  Escape must
+    close that in-progress selection without producing a capture.
+    """
+    try:
+        from Xlib import X, display
+    except ImportError as error:
+        raise SmokeError("python-xlib is required for window-selection verification") from error
+    connection = display.Display(env["DISPLAY"])
+    target = None
+    other = None
+    app = None
+    target_x, target_y = 420, 240
+    target_width, target_height = 180, 120
+    target_rgb = (0xD0, 0x40, 0x70)
+    other_x, other_y = 120, 180
+    other_width, other_height = 170, 110
+    other_rgb = (0x42, 0xB8, 0x62)
+    try:
+        root = connection.screen().root
+        target = root.create_window(
+            target_x,
+            target_y,
+            target_width,
+            target_height,
+            2,
+            X.CopyFromParent,
+            X.InputOutput,
+            X.CopyFromParent,
+            background_pixel=(target_rgb[0] << 16) | (target_rgb[1] << 8) | target_rgb[2],
+        )
+        other = root.create_window(
+            other_x,
+            other_y,
+            other_width,
+            other_height,
+            2,
+            X.CopyFromParent,
+            X.InputOutput,
+            X.CopyFromParent,
+            background_pixel=(other_rgb[0] << 16) | (other_rgb[1] << 8) | other_rgb[2],
+        )
+        other.map()
+        target.map()
+        connection.sync()
+
+        app = _spawn([str(binary), "--region", "--clipboard"], env)
+        _wait_selection_start(app)
+        selection = _wait_for_window_geometry(
+            env,
+            lambda window: int(window["width"]) == root_size[0]
+            and int(window["height"]) == root_size[1],
+            3,
+        )
+        window_id = str(selection["id"])
+        target_point = (target_x + target_width // 2, target_y + target_height // 2)
+        other_point = (other_x + other_width // 2, other_y + other_height // 2)
+        _run(["xdotool", "keydown", "space"], env)
+        _run(["xdotool", "mousemove", str(target_point[0]), str(target_point[1])], env)
+
+        first_target, first_other = _wait_window_pick_tint(
+            env,
+            window_id,
+            target_point,
+            target_rgb,
+            other_point,
+            other_rgb,
+            smooth_tint,
+        )
+        _run(["xdotool", "mousemove", str(other_point[0]), str(other_point[1])], env)
+        second_other, second_target = _wait_window_pick_tint(
+            env,
+            window_id,
+            other_point,
+            other_rgb,
+            target_point,
+            target_rgb,
+            smooth_tint,
+        )
+        if max(abs(second_target[index] - target_rgb[index]) for index in range(3)) > 2:
+            raise SmokeError(
+                "moving from target A to B left the old window highlighted: "
+                f"target={second_target}, expected={target_rgb}"
+            )
+
+        highlight_path = None
+        if artifacts_dir is not None:
+            highlight_path = artifacts_dir / "snipchord-windowpick-transition-b.png"
+            _capture_window_png(env, window_id, highlight_path)
+
+        window_cursor = _cursor_fingerprint(env)
+        # A second Space press exits window-pick mode. Release it as well so
+        # both key handling paths are covered regardless of the implementation
+        # choosing key-press or key-release as its toggle edge.
+        _run(["xdotool", "key", "space"], env)
+        _run(["xdotool", "mousemove", "40", "40"], env)
+        region_point = (120, 40)
+        _run(["xdotool", "mousedown", "1"], env)
+        _run(["xdotool", "mousemove", "200", "160"], env)
+        deadline = time.monotonic() + 3
+        region_border = (0, 0, 0)
+        restored_target = target_rgb
+        restored_other = other_rgb
+        while time.monotonic() < deadline:
+            samples = _selection_frame_samples(
+                env,
+                window_id,
+                (region_border, target_point, other_point),
+            )
+            region_border, restored_target, restored_other = samples
+            if (
+                region_border == (255, 255, 255)
+                and max(abs(restored_target[index] - target_rgb[index]) for index in range(3)) <= 2
+                and max(abs(restored_other[index] - other_rgb[index]) for index in range(3)) <= 2
+            ):
+                break
+            time.sleep(0.01)
+        else:
+            raise SmokeError(
+                "Space did not restore region mode and its normal frame: "
+                f"border={region_border}, target={restored_target}, other={restored_other}"
+            )
+        region_cursor = _cursor_fingerprint(env)
+        if window_cursor is not None and region_cursor is not None and window_cursor == region_cursor:
+            raise SmokeError(
+                "Space restored region mode pixels but did not restore the region cursor"
+            )
+        _run(["xdotool", "key", "Escape"], env)
+        _run(["xdotool", "mouseup", "1"], env)
+        _wait_for_window_hidden(env, window_id)
+        try:
+            app.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            raise SmokeError("Escape did not finish the window-pick selection") from None
+        output = app.stdout.read().decode(errors="replace") if app.stdout else ""
+        if CAPTURE_RE.search(output):
+            raise SmokeError(f"Escape unexpectedly produced a capture: {output[-1000:]}")
+        return {
+            "target_a": first_target,
+            "target_b": second_other,
+            "old_target_restored": second_target,
+            "region_border": region_border,
+            "region_cursor_changed": window_cursor != region_cursor
+            if window_cursor is not None and region_cursor is not None
+            else "unavailable",
+            "highlight_artifact": str(highlight_path) if highlight_path is not None else None,
+            "escape_cancelled": True,
+        }
+    finally:
+        with contextlib.suppress(Exception):
+            _run(["xdotool", "keyup", "space"], env, timeout=2)
+        with contextlib.suppress(Exception):
+            _run(["xdotool", "mouseup", "1"], env, timeout=2)
+        _terminate(app)
+        if target is not None:
+            with contextlib.suppress(Exception):
+                target.destroy()
+                connection.flush()
+        if other is not None:
+            with contextlib.suppress(Exception):
+                other.destroy()
+                connection.flush()
+        connection.close()
 
 
 def _selection_redraw_has_no_intermediate_frame(
@@ -2637,24 +3007,38 @@ def _region_snapshot_is_immutable(
 def _window_selection_capture(
     binary: Path,
     env: Mapping[str, str],
+    artifacts_dir: Path | None = None,
     root_size: tuple[int, int] = (DEFAULT_WIDTH, DEFAULT_HEIGHT),
+    smooth_tint: bool = True,
 ) -> dict[str, object]:
-    """Exercise Space-before-drag window picking against a real X11 child."""
+    """Exercise the macOS-style window-pick highlight and its real capture.
+
+    The overlay should make the hovered child visually obvious with a blue
+    tint, leave a nearby non-target child unchanged, and remove that tint from
+    the captured pixels.  The final capture is deliberately checked after the
+    target changes colour while the overlay is still active; this proves that
+    the image returned by the window path is the live child surface rather
+    than a screenshot of the decorated selection overlay.
+    """
     try:
         from Xlib import X, display
     except ImportError as error:
         raise SmokeError("python-xlib is required for window-selection verification") from error
     connection = display.Display(env["DISPLAY"])
     child = None
+    non_target = None
     app = None
     child_x, child_y = 420, 240
     child_width, child_height = 180, 120
     initial_rgb = (0xD0, 0x40, 0x70)
+    non_target_x, non_target_y = 120, 180
+    non_target_width, non_target_height = 170, 110
+    non_target_rgb = (0x42, 0xB8, 0x62)
     try:
         root = connection.screen().root
-        # Xvfb's 24-bit TrueColor visual uses 0x00RRGGBB pixels.  A mapped
-        # child gives WindowPicker a concrete stack entry and a distinctive
-        # crop whose dimensions/pixels can be checked below.
+        # Xvfb's 24-bit TrueColor visual uses 0x00RRGGBB pixels.  Two mapped
+        # children give WindowPicker a concrete target and a nearby control
+        # window whose pixels must remain untouched by the highlight.
         child = root.create_window(
             child_x,
             child_y,
@@ -2666,6 +3050,22 @@ def _window_selection_capture(
             X.CopyFromParent,
             background_pixel=(initial_rgb[0] << 16) | (initial_rgb[1] << 8) | initial_rgb[2],
         )
+        non_target = root.create_window(
+            non_target_x,
+            non_target_y,
+            non_target_width,
+            non_target_height,
+            2,
+            X.CopyFromParent,
+            X.InputOutput,
+            X.CopyFromParent,
+            background_pixel=(
+                (non_target_rgb[0] << 16) | (non_target_rgb[1] << 8) | non_target_rgb[2]
+            ),
+        )
+        # Map the non-target first so the target remains the topmost child if
+        # their rectangles ever overlap on a larger or smaller test surface.
+        non_target.map()
         child.map()
         connection.sync()
 
@@ -2682,8 +3082,47 @@ def _window_selection_capture(
             3,
         )
 
+        # Enter window-pick mode and capture the decorated overlay before the
+        # click. The target should gain a blue bias while the nearby child
+        # remains exactly its original colour.
+        _run(["xdotool", "keydown", "space"], env)
+        _run(
+            [
+                "xdotool",
+                "mousemove",
+                str(child_x + child_width // 2),
+                str(child_y + child_height // 2),
+            ],
+            env,
+        )
+        target_point = (child_x + child_width // 2, child_y + child_height // 2)
+        non_target_point = (
+            non_target_x + non_target_width // 2,
+            non_target_y + non_target_height // 2,
+        )
+        selection_window = _wait_for_window_geometry(
+            env,
+            lambda window: int(window["width"]) == root_size[0]
+            and int(window["height"]) == root_size[1],
+            3,
+        )
+        selection_window_id = str(selection_window["id"])
+        observed_target, observed_non_target = _wait_window_pick_tint(
+            env,
+            selection_window_id,
+            target_point,
+            initial_rgb,
+            non_target_point,
+            non_target_rgb,
+            smooth_tint,
+        )
+        highlight_path = None
+        if artifacts_dir is not None:
+            highlight_path = artifacts_dir / "snipchord-windowpick-highlight.png"
+            _capture_window_png(env, selection_window_id, highlight_path)
+
         # The root image is frozen before the overlay is mapped. Change the
-        # child only after that point: a real Composite/window-pixmap capture
+        # target only after that point: a real Composite/window-pixmap capture
         # must return the new surface pixels, while a crop of the frozen root
         # would still contain the original initial_rgb. This proves the native
         # window path rather than merely proving that the initial desktop crop
@@ -2694,7 +3133,6 @@ def _window_selection_capture(
         )
         child.clear_area(0, 0, child_width, child_height, exposures=False)
         connection.sync()
-        _run(["xdotool", "keydown", "space"], env)
         _run(
             [
                 "xdotool",
@@ -2729,6 +3167,9 @@ def _window_selection_capture(
             "dimensions": dimensions,
             "png_bytes": len(png),
             "center": center,
+            "highlight_target": observed_target,
+            "highlight_non_target": observed_non_target,
+            "highlight_artifact": str(highlight_path) if highlight_path is not None else None,
             "native_surface": "post-freeze child pixels",
         }
     finally:
@@ -2736,6 +3177,10 @@ def _window_selection_capture(
         if child is not None:
             with contextlib.suppress(Exception):
                 child.destroy()
+                connection.flush()
+        if non_target is not None:
+            with contextlib.suppress(Exception):
+                non_target.destroy()
                 connection.flush()
         connection.close()
 
@@ -2853,17 +3298,90 @@ def _preferences_and_preview(
         )
         + "\n"
     )
+    env, gsettings_log = _gsettings_stub(env)
+
+    def click_preferences(window_id: str, x: int, y: int) -> None:
+        _run(["xdotool", "windowfocus", "--sync", window_id], env)
+        _run(["xdotool", "mousemove", "--window", window_id, str(x), str(y)], env)
+        _run(["xdotool", "click", "1"], env)
+        time.sleep(0.2)
 
     preferences = _spawn([str(binary), "--preferences"], env)
     try:
         window_id = _wait_for_window(env, "SnipChord Preferences", 8)
+        preference_geometry = next(
+            (
+                window
+                for window in _window_geometries(env)
+                if int(str(window["id"]), 0) == int(window_id, 0)
+            ),
+            None,
+        )
+        if preference_geometry is None:
+            raise SmokeError(f"could not find Preferences geometry for {window_id}")
+        _assert_window_on_screen(preference_geometry, root_size, "Preferences")
+        _assert_window_centered(preference_geometry, root_size, "Preferences")
+        preferences_png = Path(
+            os.environ.get(
+                "SNIPCHORD_PREFERENCES_QA_PATH",
+                "/tmp/snipchord-preferences-general.png",
+            )
+        )
+        # Keep the General and Shortcuts surfaces as separate artifacts for
+        # visual QA.  These points are the two fixed sidebar rows in the
+        # settings design; the native surface has no toolkit widgets to query.
+        _capture_window_png(env, window_id, preferences_png)
+        if not preferences_png.is_file() or preferences_png.stat().st_size == 0:
+            raise SmokeError(f"Preferences General capture was not written: {preferences_png}")
+        shortcuts_png = Path(
+            os.environ.get(
+                "SNIPCHORD_SHORTCUTS_QA_PATH",
+                "/tmp/snipchord-preferences-shortcuts.png",
+            )
+        )
+        click_preferences(window_id, 84, 174)
+        _capture_window_png(env, window_id, shortcuts_png)
+        if not shortcuts_png.is_file() or shortcuts_png.stat().st_size == 0:
+            raise SmokeError(f"Preferences Shortcuts capture was not written: {shortcuts_png}")
+        if preferences_png.read_bytes() == shortcuts_png.read_bytes():
+            raise SmokeError("Preferences General and Shortcuts tabs rendered identically")
+        shortcut_text = re.sub(r"[^a-z0-9]", "", _ocr_png(env, shortcuts_png).lower())
+        # Tesseract occasionally reads the lowercase ``l`` in Ctrl as ``i``
+        # on this small dark surface (``Ctri+Alt+r``).  Accept that OCR
+        # variant while still requiring the configured key sequence.
+        if shortcut_text and not any(
+            token in shortcut_text for token in ("ctlaltr", "ctrlaltr", "ctrialtr")
+        ):
+            raise SmokeError(
+                "configured shortcut artifact did not show the fixture binding Ctrl+Alt+r"
+            )
+        # The fixture exposes one managed entry with a changed binding.  This
+        # proves the UI reads the current desktop value rather than painting
+        # the installer's default unconditionally.
+        log_text = gsettings_log.read_text(errors="replace") if gsettings_log.exists() else ""
+        if (
+            "configured\torg.gnome.settings-daemon.plugins.media-keys\tcustom-keybindings"
+            not in log_text
+            or "configured\torg.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/\tcommand"
+            not in log_text
+            or "configured\torg.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/\tbinding"
+            not in log_text
+        ):
+            raise SmokeError(f"shortcut fixture was not queried as expected: {log_text!r}")
+        # A click on the displayed key chip is intentionally inert: shortcut
+        # changes belong to desktop keyboard settings, so this surface remains
+        # read-only and must not alter the capture preferences file.
+        settings_before_shortcut_click = settings.read_bytes()
+        click_preferences(window_id, 300, 198)
+        if settings.read_bytes() != settings_before_shortcut_click:
+            raise SmokeError("clicking a shortcut row changed Preferences settings")
+        click_preferences(window_id, 84, 124)
         # The native Rust window handles pointer events directly (there are no
-        # toolkit child widgets), so click the first checkbox in window-local
-        # coordinates rather than relying on GTK's Tab/Space focus traversal.
-        _run(["xdotool", "windowfocus", "--sync", window_id], env)
-        _run(["xdotool", "mousemove", "--window", window_id, "100", "110"], env)
-        _run(["xdotool", "click", "1"], env)
-        time.sleep(0.2)
+        # toolkit child widgets). Keep these points in the UI's interaction
+        # contract rather than relying on keyboard focus traversal: the
+        # toggles sit on the right edge of the two General panels.
+        click_preferences(window_id, 420, 196)
+        click_preferences(window_id, 420, 280)
     finally:
         _terminate(preferences)
     if not settings.exists():
@@ -2877,17 +3395,32 @@ def _preferences_and_preview(
         raise SmokeError(f"preferences wrote invalid JSON: {error}") from error
     if saved_settings.get("show_preview") is not False:
         raise SmokeError(f"preferences checkbox did not toggle show_preview: {saved_settings!r}")
+    if saved_settings.get("save_automatically") is not True:
+        raise SmokeError(f"preferences save toggle did not turn on: {saved_settings!r}")
 
-    # Restore the default before exercising a normal capture.  This also
-    # verifies that a user can turn the transient thumbnail back on without
-    # restarting the resident process.
+    # A readable settings service with an empty managed-path list must show
+    # each shortcut as unassigned. Capture that tab separately before restoring
+    # the two persistent capture options.
+    env["SNIPCHORD_GSETTINGS_MODE"] = "empty"
     preferences = _spawn([str(binary), "--preferences"], env)
     try:
         window_id = _wait_for_window(env, "SnipChord Preferences", 8)
-        _run(["xdotool", "windowfocus", "--sync", window_id], env)
-        _run(["xdotool", "mousemove", "--window", window_id, "100", "110"], env)
-        _run(["xdotool", "click", "1"], env)
-        time.sleep(0.2)
+        click_preferences(window_id, 84, 174)
+        unassigned_png = Path(
+            os.environ.get(
+                "SNIPCHORD_SHORTCUTS_UNASSIGNED_QA_PATH",
+                "/tmp/snipchord-preferences-shortcuts-unassigned.png",
+            )
+        )
+        _capture_window_png(env, window_id, unassigned_png)
+        if not unassigned_png.is_file() or unassigned_png.stat().st_size == 0:
+            raise SmokeError(f"Preferences unassigned capture was not written: {unassigned_png}")
+        unassigned_text = re.sub(r"[^a-z0-9]", "", _ocr_png(env, unassigned_png).lower())
+        if unassigned_text and "notassigned" not in unassigned_text:
+            raise SmokeError("empty shortcut fixture artifact did not show Not assigned")
+        click_preferences(window_id, 84, 124)
+        click_preferences(window_id, 420, 196)
+        click_preferences(window_id, 420, 280)
     finally:
         _terminate(preferences)
     try:
@@ -2896,6 +3429,37 @@ def _preferences_and_preview(
         raise SmokeError(f"preferences wrote invalid JSON after re-enable: {error}") from error
     if saved_settings.get("show_preview") is not True:
         raise SmokeError(f"preferences did not re-enable show_preview: {saved_settings!r}")
+    if saved_settings.get("save_automatically") is not False:
+        raise SmokeError(f"preferences save toggle did not turn off: {saved_settings!r}")
+
+    # A settings command that cannot be executed falls back to the installer's
+    # defaults. Keep a third artifact so reviewers can compare configured,
+    # unassigned, and fallback states without changing the user's desktop.
+    env["SNIPCHORD_GSETTINGS_MODE"] = "fallback"
+    preferences = _spawn([str(binary), "--preferences"], env)
+    try:
+        window_id = _wait_for_window(env, "SnipChord Preferences", 8)
+        click_preferences(window_id, 84, 174)
+        defaults_png = Path(
+            os.environ.get(
+                "SNIPCHORD_SHORTCUTS_DEFAULTS_QA_PATH",
+                "/tmp/snipchord-preferences-shortcuts-defaults.png",
+            )
+        )
+        _capture_window_png(env, window_id, defaults_png)
+        if not defaults_png.is_file() or defaults_png.stat().st_size == 0:
+            raise SmokeError(f"Preferences defaults capture was not written: {defaults_png}")
+        defaults_text = re.sub(r"[^a-z0-9]", "", _ocr_png(env, defaults_png).lower())
+        if defaults_text and not (
+            any(token in defaults_text for token in ("ctrl", "ctri", "ctl"))
+            and "alt" in defaults_text
+            and "shi" in defaults_text
+            and "4" in defaults_text
+        ):
+            raise SmokeError("fallback shortcut artifact did not show the installer's defaults")
+    finally:
+        _terminate(preferences)
+    env["SNIPCHORD_GSETTINGS_MODE"] = "configured"
 
     try:
         from Xlib import X, display
@@ -2948,7 +3512,17 @@ def _preferences_and_preview(
             )
 
         _wait_for_thumbnail_gone(env, root_size)
-        return {"geometry": geometry, "visual": visual, "shape": shape, "dismissed": True}
+        return {
+            "preferences_png": str(preferences_png),
+            "shortcuts_png": str(shortcuts_png),
+            "shortcuts_unassigned_png": str(unassigned_png),
+            "shortcuts_defaults_png": str(defaults_png),
+            "preferences_geometry": preference_geometry,
+            "geometry": geometry,
+            "visual": visual,
+            "shape": shape,
+            "dismissed": True,
+        }
     finally:
         _terminate(preview)
         if focus_sentinel is not None:
@@ -3345,10 +3919,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                         env,
                         (args.width, args.height),
                     )
+                    window_transitions = _window_selection_mode_transitions(
+                        binary,
+                        env,
+                        args.artifacts_dir,
+                        (args.width, args.height),
+                        smooth_tint=not args.disable_render,
+                    )
                     window_capture = _window_selection_capture(
                         binary,
                         env,
+                        args.artifacts_dir,
                         (args.width, args.height),
+                        smooth_tint=not args.disable_render,
                     )
                     clipped_window = _window_selection_clipped_capture(
                         binary,
@@ -3384,6 +3967,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"PASS fullscreen save output directory {saved_fullscreen}")
                     print(f"PASS save-mode Escape cleanup {save_cancel}")
                     print(f"PASS pre-overlay snapshot immutability {snapshot}")
+                    print(f"PASS window-pick transitions/cursor/Escape {window_transitions}")
                     print(f"PASS Space-before-drag window capture {window_capture}")
                     print(f"PASS clipped Composite window capture {clipped_window}")
                     print("PASS focus restore and foreign ClientMessage")
