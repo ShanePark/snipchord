@@ -2435,21 +2435,11 @@ impl Ui {
         let rect = target
             .clipped_to_root(u32::from(width), u32::from(height))
             .ok_or_else(|| invalid("selected window is outside the captured root"))?;
-        // Composite's client/frame path needs the frozen root crop for its
-        // safe fallback and for overlaying a client pixmap over the frozen
-        // frame. This reads only the selected window rectangle, and only after
-        // the user clicks; the hotkey and pointer-motion paths do no readback.
-        let frozen_crop = capture.read_region(context, rect.x, rect.y, rect.width, rect.height)?;
-        Ok(self
-            .window_picker
-            .capture_target_from_frozen_crop(
-                &context.conn,
-                target,
-                &frozen_crop,
-                (rect.x, rect.y),
-                context.visual(),
-            )?
-            .image)
+        // Window selection must use the same frame that was frozen when the
+        // shortcut was pressed.  A live Composite read here would reintroduce
+        // animation or movement after the overlay was shown, which is exactly
+        // what the frozen selection surface is meant to prevent.
+        capture.read_region(context, rect.x, rect.y, rect.width, rect.height)
     }
 
     fn selection_key_press(

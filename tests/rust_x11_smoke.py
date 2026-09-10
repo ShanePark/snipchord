@@ -352,6 +352,28 @@ def _read_until(
     raise SmokeError(f"timed out waiting for {pattern.pattern!r}; output={text[-3000:]}")
 
 
+def _read_recent_output(process: subprocess.Popen[bytes], timeout: float = 0.25) -> str:
+    """Read output already queued on a resident process without waiting for EOF."""
+    if process.stdout is None:
+        return ""
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    chunks: list[bytes] = []
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            events = selector.select(max(0.01, min(0.05, deadline - time.monotonic())))
+            if not events:
+                continue
+            chunk = process.stdout.read1(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        selector.close()
+    return b"".join(chunks).decode(errors="replace")
+
+
 def _wait_selection_start(process: subprocess.Popen[bytes], timeout: float = 1.0) -> None:
     """Give a freshly spawned selector time to grab the private X11 surface.
 
@@ -1569,7 +1591,7 @@ def _keyboard_grab_deferred_selection(
 
 
 def _failed_pointer_grab_releases_keyboard(binary: Path, env: Mapping[str, str]) -> None:
-    """Keep the genuine pointer-busy setup failure and cleanup regression."""
+    """Retry a resident capture after a real pointer-busy timeout."""
     try:
         from Xlib import X, display
     except ImportError as error:
@@ -1578,6 +1600,7 @@ def _failed_pointer_grab_releases_keyboard(binary: Path, env: Mapping[str, str])
     blocker = None
     app = None
     daemon = None
+    fresh_command = None
     try:
         blocker = connection.screen().root.create_window(
             4,
@@ -1604,32 +1627,81 @@ def _failed_pointer_grab_releases_keyboard(binary: Path, env: Mapping[str, str])
             raise SmokeError(f"fixture could not acquire pointer grab: {pointer}")
 
         app = _spawn([str(binary), "--region"], env)
-        try:
-            app.wait(timeout=8)
-        except subprocess.TimeoutExpired as error:
-            raise SmokeError("selection did not fail while the pointer was externally grabbed") from error
-        if app.returncode == 0:
-            output = app.stdout.read().decode(errors="replace") if app.stdout else ""
+        # A resident capture keeps retrying while the pointer is externally
+        # owned.  Wait past its bounded retry timeout, then verify that no
+        # selection overlay or capture marker appeared and that the owner is
+        # still alive for a later command.
+        deadline = time.monotonic() + 6.5
+        output = ""
+        while time.monotonic() < deadline:
+            if app.poll() is not None:
+                output += _read_recent_output(app, 0.05)
+                raise SmokeError(
+                    "selection owner exited while the pointer was externally grabbed; "
+                    f"returncode={app.returncode}, output={output[-1000:]}"
+                )
+            time.sleep(0.05)
+        output += _read_recent_output(app, 0.25)
+        if CAPTURE_RE.search(output):
             raise SmokeError(
-                "selection unexpectedly succeeded despite the external pointer grab; "
+                "pointer-busy setup unexpectedly captured before the grab was released; "
                 f"output={output[-1000:]}"
+            )
+        root_windows = [
+            window
+            for window in _window_geometries(env)
+            if int(window["width"]) == DEFAULT_WIDTH and int(window["height"]) == DEFAULT_HEIGHT
+        ]
+        if root_windows:
+            raise SmokeError(
+                "pointer-busy retry left a selection overlay mapped: "
+                f"windows={root_windows}"
             )
 
         # The failed setup must release any keyboard state before returning;
-        # after the blocker releases the pointer a daemon can claim the app.
+        # after the blocker releases the pointer the same resident owner must
+        # claim both grabs for a fresh selection.
         connection.ungrab_pointer(X.CurrentTime)
         connection.flush()
-        daemon = _spawn([str(binary), "--daemon"], env)
-        _wait_for_instance_owner(env)
+        existing_windows = {
+            str(window["id"])
+            for window in _window_geometries(env)
+            if int(window["width"]) == DEFAULT_WIDTH
+            and int(window["height"]) == DEFAULT_HEIGHT
+        }
+        fresh_command = _spawn([str(binary), "--region"], env)
+        fresh_command.wait(timeout=8)
+        if fresh_command.returncode != 0:
+            fresh_output = (
+                fresh_command.stdout.read().decode(errors="replace") if fresh_command.stdout else ""
+            )
+            raise SmokeError(
+                "resident did not accept a fresh region command after pointer release; "
+                f"output={fresh_output[-1000:]}"
+            )
+        selection = _wait_for_window_geometry(
+            env,
+            lambda window: str(window["id"]) not in existing_windows
+            and int(window["width"]) == DEFAULT_WIDTH
+            and int(window["height"]) == DEFAULT_HEIGHT,
+            5,
+        )
+        # Escape must be delivered through the selector's keyboard grab. This
+        # proves the failed pointer path did not leak a keyboard grab.
+        _run(["xdotool", "key", "Escape"], env, timeout=3)
+        _wait_for_window_hidden(env, str(selection["id"]))
+        if app.poll() is not None:
+            raise SmokeError(f"resident exited during post-failure cancellation ({app.returncode})")
         _run([str(binary), "--quit"], env, timeout=8)
         deadline = time.monotonic() + 3
-        while daemon.poll() is None and time.monotonic() < deadline:
+        while app.poll() is None and time.monotonic() < deadline:
             time.sleep(0.05)
-        if daemon.poll() is None:
-            raise SmokeError("daemon did not accept --quit after pointer-busy setup failure")
+        if app.poll() is None:
+            raise SmokeError("resident did not accept --quit after pointer-busy setup failure")
     finally:
         _terminate(app)
         _terminate(daemon)
+        _terminate(fresh_command)
         if blocker is not None:
             with contextlib.suppress(Exception):
                 connection.ungrab_pointer(X.CurrentTime)
@@ -2460,6 +2532,7 @@ def _window_selection_mode_transitions(
         # A second Space press exits window-pick mode. Release it as well so
         # both key handling paths are covered regardless of the implementation
         # choosing key-press or key-release as its toggle edge.
+        _run(["xdotool", "keyup", "space"], env)
         _run(["xdotool", "key", "space"], env)
         _run(["xdotool", "mousemove", "40", "40"], env)
         region_point = (120, 40)
@@ -2473,7 +2546,7 @@ def _window_selection_mode_transitions(
             samples = _selection_frame_samples(
                 env,
                 window_id,
-                (region_border, target_point, other_point),
+                (region_point, target_point, other_point),
             )
             region_border, restored_target, restored_other = samples
             if (
@@ -2496,13 +2569,11 @@ def _window_selection_mode_transitions(
         _run(["xdotool", "key", "Escape"], env)
         _run(["xdotool", "mouseup", "1"], env)
         _wait_for_window_hidden(env, window_id)
-        try:
-            app.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            raise SmokeError("Escape did not finish the window-pick selection") from None
-        output = app.stdout.read().decode(errors="replace") if app.stdout else ""
+        output = _read_recent_output(app)
         if CAPTURE_RE.search(output):
             raise SmokeError(f"Escape unexpectedly produced a capture: {output[-1000:]}")
+        if app.poll() is not None:
+            raise SmokeError(f"Escape unexpectedly stopped the resident selector ({app.returncode})")
         return {
             "target_a": first_target,
             "target_b": second_other,
@@ -3016,9 +3087,9 @@ def _window_selection_capture(
     The overlay should make the hovered child visually obvious with a blue
     tint, leave a nearby non-target child unchanged, and remove that tint from
     the captured pixels.  The final capture is deliberately checked after the
-    target changes colour while the overlay is still active; this proves that
-    the image returned by the window path is the live child surface rather
-    than a screenshot of the decorated selection overlay.
+    target changes colour while the overlay is still active; the result must
+    retain the trigger-time pixels rather than reading the moving child or
+    the decorated selection overlay.
     """
     try:
         from Xlib import X, display
@@ -3122,11 +3193,9 @@ def _window_selection_capture(
             _capture_window_png(env, selection_window_id, highlight_path)
 
         # The root image is frozen before the overlay is mapped. Change the
-        # target only after that point: a real Composite/window-pixmap capture
-        # must return the new surface pixels, while a crop of the frozen root
-        # would still contain the original initial_rgb. This proves the native
-        # window path rather than merely proving that the initial desktop crop
-        # happened to include the child.
+        # target only after that point: the accepted window crop must retain
+        # the trigger-time pixels even when the live child changes while the
+        # user is choosing a target.
         child_rgb = (0x28, 0xB0, 0xD8)
         child.change_attributes(
             background_pixel=(child_rgb[0] << 16) | (child_rgb[1] << 8) | child_rgb[2]
@@ -3159,9 +3228,9 @@ def _window_selection_capture(
         if (png_w, png_h) != dimensions:
             raise SmokeError(f"window pick clipboard dimensions {(png_w, png_h)} != {dimensions}")
         center = samples[1]
-        if sum(abs(center[index] - child_rgb[index]) for index in range(3)) > 12:
+        if sum(abs(center[index] - initial_rgb[index]) for index in range(3)) > 12:
             raise SmokeError(
-                f"window pick did not capture the child surface: center={center}, expected={child_rgb}"
+                f"window pick did not preserve trigger-time pixels: center={center}, expected={initial_rgb}"
             )
         return {
             "dimensions": dimensions,
@@ -3170,7 +3239,7 @@ def _window_selection_capture(
             "highlight_target": observed_target,
             "highlight_non_target": observed_non_target,
             "highlight_artifact": str(highlight_path) if highlight_path is not None else None,
-            "native_surface": "post-freeze child pixels",
+            "native_surface": "trigger-time frozen child pixels",
         }
     finally:
         _terminate(app)
@@ -3190,7 +3259,7 @@ def _window_selection_clipped_capture(
     env: Mapping[str, str],
     root_size: tuple[int, int] = (DEFAULT_WIDTH, DEFAULT_HEIGHT),
 ) -> dict[str, object]:
-    """Verify a live Composite window is clipped correctly at root edges."""
+    """Verify a frozen window crop is clipped correctly at root edges."""
     try:
         from Xlib import X, display
     except ImportError as error:
@@ -3253,9 +3322,9 @@ def _window_selection_clipped_capture(
         if (png_w, png_h) != dimensions:
             raise SmokeError(f"clipped window dimensions {(png_w, png_h)} != {dimensions}")
         center = samples[1]
-        if sum(abs(center[index] - updated_rgb[index]) for index in range(3)) > 12:
+        if sum(abs(center[index] - initial_rgb[index]) for index in range(3)) > 12:
             raise SmokeError(
-                f"clipped window did not preserve live child pixels: center={center}, expected={updated_rgb}"
+                f"clipped window did not preserve trigger-time pixels: center={center}, expected={initial_rgb}"
             )
         return {
             "dimensions": dimensions,

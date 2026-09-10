@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Keep the X11 path protocol-level: no toolkit is required for the capture/overlay.
-x11rb = { version = "0.13.2", features = ["composite", "image", "randr", "render", "shape", "xinerama"] }
+x11rb = { version = "0.13.2", features = ["composite", "image", "randr", "render", "shape", "xinerama", "xinput", "xtest"] }
 x11-dl = "2.21.0"
 png = "0.17.16"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }

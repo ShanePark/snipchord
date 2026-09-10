@@ -13,8 +13,10 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::os::fd::AsRawFd;
+use std::os::raw::{c_char, c_int, c_uint, c_ulong};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::ptr;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -25,13 +27,15 @@ use x11rb::CURRENT_TIME;
 
 use crate::clipboard::Clipboard;
 use crate::geometry::Rect;
+use crate::hotkeys::Hotkeys;
 use crate::image::{capture_root_with_size, RgbaImage};
+use crate::server_capture::ServerCapture;
 use crate::settings::{read_settings, write_settings, Settings};
 use crate::shortcuts;
 use crate::storage;
 use crate::tray::TrayRuntime;
 use crate::ui::Ui;
-use crate::window_capture::{WindowPicker, WindowTarget};
+use crate::window_capture::WindowTarget;
 use crate::x11::{Instance, InstanceClaim, X11Context};
 
 /// Errors returned by application operations share the same bound used by the
@@ -51,6 +55,20 @@ struct PreviewPreparation {
     handle: JoinHandle<()>,
 }
 
+enum FrozenSelectionFrame {
+    Native(ServerCapture),
+    Client(RgbaImage),
+}
+
+struct PendingSelectionCapture {
+    frame: FrozenSelectionFrame,
+    output: OutputMode,
+    demo: bool,
+    started: Instant,
+    next_escape_attempt: Instant,
+    escape_sent: bool,
+}
+
 const COMMAND_REGION: u32 = 1;
 const COMMAND_FULLSCREEN: u32 = 2;
 const COMMAND_PREFERENCES: u32 = 3;
@@ -61,6 +79,14 @@ const COMMAND_REGION_SAVE: u32 = 7;
 const COMMAND_FULLSCREEN_CLIPBOARD: u32 = 8;
 const COMMAND_FULLSCREEN_SAVE: u32 = 9;
 const COMMAND_ABOUT: u32 = 10;
+
+// A context menu owns the X11 pointer grab until it is dismissed. Keep the
+// frozen frame in a pending capture while the menu releases that grab instead
+// of taking a second, post-dismissal screenshot.
+const PENDING_CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+const PENDING_CAPTURE_RETRY: Duration = Duration::from_millis(8);
+const ESCAPE_RETRY: Duration = Duration::from_millis(50);
+const XK_ESCAPE: c_ulong = 0xff1b;
 
 /// The project's public source repository, shown by the tray About item and
 /// the native About window.
@@ -81,9 +107,9 @@ pub enum UiAction {
     Selected(Rect),
     /// A window selected after entering window-selection mode with Space.
     ///
-    /// Keep the sampled XID and geometry until the application commits the
-    /// image.  This gives Composite a chance to replace an occluded client
-    /// area while retaining the frozen-root crop as a safe fallback.
+    /// Keep the sampled geometry until the application commits the image.
+    /// The committed crop comes from the same frozen frame as region mode, so
+    /// an animated window cannot change while the selection is open.
     SelectedWindow(WindowTarget),
     Cancelled,
     Close,
@@ -366,6 +392,19 @@ fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
+fn mode_for_command(command: u32) -> Option<Mode> {
+    match command {
+        COMMAND_REGION => Some(Mode::Region),
+        COMMAND_FULLSCREEN => Some(Mode::Fullscreen),
+        COMMAND_REGION_CLIPBOARD => Some(Mode::RegionClipboard),
+        COMMAND_REGION_SAVE => Some(Mode::RegionSave),
+        COMMAND_FULLSCREEN_CLIPBOARD => Some(Mode::FullscreenClipboard),
+        COMMAND_FULLSCREEN_SAVE => Some(Mode::FullscreenSave),
+        COMMAND_DEMO => Some(Mode::Demo),
+        _ => None,
+    }
+}
+
 pub const HELP_TEXT: &str = "SnipChord — select, capture, carry on.\n\
 Usage: snipchord [--region | --fullscreen] [--clipboard | --save]\n\
        snipchord [--preferences | --about | --daemon | --demo | --quit]\n\
@@ -467,7 +506,7 @@ pub struct App {
     instance: Option<Instance>,
     clipboard: Clipboard,
     ui: Ui,
-    window_picker: WindowPicker,
+    hotkeys: Option<Hotkeys>,
     settings: Settings,
     image: Option<RgbaImage>,
     saved_path: Option<PathBuf>,
@@ -478,6 +517,7 @@ pub struct App {
     next_preview_publication: u64,
     preview_ready: Option<(u64, PathBuf)>,
     pending_preview_open: Option<u64>,
+    pending_capture: Option<PendingSelectionCapture>,
     pending_image: Option<RgbaImage>,
     pending_output: Option<OutputMode>,
     current_demo: bool,
@@ -494,15 +534,6 @@ impl App {
                 return Err(error);
             }
         };
-        let window_picker = match WindowPicker::new(&context.conn) {
-            Ok(window_picker) => window_picker,
-            Err(error) => {
-                let mut clipboard = clipboard;
-                let _ = clipboard.release(&context.conn);
-                let _ = instance.release(&context);
-                return Err(error);
-            }
-        };
         let ui = match Ui::new(&context) {
             Ok(ui) => ui,
             Err(error) => {
@@ -510,6 +541,13 @@ impl App {
                 let _ = clipboard.release(&context.conn);
                 let _ = instance.release(&context);
                 return Err(error);
+            }
+        };
+        let hotkeys = match Hotkeys::new(&context) {
+            Ok(hotkeys) => hotkeys,
+            Err(error) => {
+                eprintln!("snipchord: raw hotkeys unavailable: {error}");
+                None
             }
         };
 
@@ -522,7 +560,7 @@ impl App {
             instance: Some(instance),
             clipboard,
             ui,
-            window_picker,
+            hotkeys,
             settings,
             image: None,
             saved_path: None,
@@ -533,6 +571,7 @@ impl App {
             next_preview_publication: 1,
             preview_ready: None,
             pending_preview_open: None,
+            pending_capture: None,
             pending_image: None,
             pending_output: None,
             current_demo: false,
@@ -585,34 +624,14 @@ impl App {
     }
 
     fn begin_capture(&mut self, fullscreen: bool, demo: bool, output: OutputMode) -> AppResult<()> {
-        if self.pending_image.is_some() || self.ui.has_selection() {
+        if self.pending_capture.is_some() || self.pending_image.is_some() || self.ui.has_selection()
+        {
             return Ok(());
         }
         // A new capture invalidates the current ready path.  An earlier click
         // remains associated with its own generation so it can still open the
         // correct image if that worker finishes after this capture starts.
         self.invalidate_preview_generation();
-
-        // Install the cursor and input grabs before any
-        // geometry/configuration reads or full-screen capture work.  On a
-        // large desktop the server-side snapshot can take a noticeable
-        // amount of time; grabbing the pointer first makes the crosshair
-        // appear at the moment the shortcut is handled and keeps an eager
-        // click away from the application underneath.  Native selection
-        // setup adopts these grabs once its real surface is ready.
-        if !fullscreen {
-            if let Err(error) = self.ui.prepare_capture_cursor(&self.context) {
-                // A pre-existing external grab should not prevent the
-                // established fallback path from attempting its normal
-                // transactional selection setup.
-                eprintln!("snipchord: early capture input unavailable: {error}");
-            } else if env::var_os("SNIPCHORD_BENCHMARK_READY").is_some() {
-                // stderr is unbuffered when the daemon is launched by the
-                // benchmark harness, so the readiness marker cannot sit in
-                // stdout's block buffer until a later capture completes.
-                eprintln!("selection_input_ready");
-            }
-        }
 
         // A resident daemon keeps its X11 connection warm, so reload the
         // small settings file before each command. This makes a standalone
@@ -647,24 +666,19 @@ impl App {
             thread::sleep(Duration::from_millis(16));
         }
 
+        // Establish the frozen frame before trying to claim input.  A file
+        // manager context menu owns the pointer grab while it is visible, but
+        // CopyArea can still snapshot the root underneath that grab.  Taking
+        // this boundary first lets the menu be dismissed without changing
+        // the pixels that the user will select.
+        let mut native_capture = None;
         if !fullscreen && !demo {
             // Keep the complete desktop in X11 pixmaps while the user drags.
             // The first client-side GetImage is deferred until acceptance, so
             // the hotkey only pays for CopyArea and the small overlay setup.
             match crate::server_capture::ServerCapture::begin(&mut self.context) {
                 Ok(Some(capture)) => {
-                    self.pending_image = None;
-                    self.pending_output = Some(output);
-                    self.current_demo = false;
-                    match self.ui.start_selection_native(&self.context, capture) {
-                        Ok(()) => return Ok(()),
-                        Err(error) => {
-                            self.pending_output = None;
-                            eprintln!("snipchord: native selection unavailable: {error}");
-                            // Fall through to the established client-side
-                            // path if grabs/window setup reject the fast path.
-                        }
-                    }
+                    native_capture = Some(capture);
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -673,47 +687,151 @@ impl App {
             }
         }
 
-        let image_result = if demo {
-            RgbaImage::solid(
-                u32::from(self.context.width()),
-                u32::from(self.context.height()),
-                [0x36, 0x50, 0x70],
-            )
+        // If the server-side snapshot is unavailable, read the same frozen
+        // frame through the client path before claiming input.
+        let mut frozen_image = if fullscreen || native_capture.is_none() {
+            Some(if demo {
+                RgbaImage::solid(
+                    u32::from(self.context.width()),
+                    u32::from(self.context.height()),
+                    [0x36, 0x50, 0x70],
+                )?
+            } else {
+                capture_root_with_size(
+                    &self.context.conn,
+                    self.context.screen_num,
+                    self.context.width(),
+                    self.context.height(),
+                )?
+            })
         } else {
-            capture_root_with_size(
-                &self.context.conn,
-                self.context.screen_num,
-                self.context.width(),
-                self.context.height(),
-            )
-        };
-        let image = match image_result {
-            Ok(image) => image,
-            Err(error) => {
-                let cleanup = self.ui.close_capture_cursor(&self.context);
-                return match cleanup {
-                    Ok(()) => Err(error),
-                    Err(cleanup_error) => Err(format!(
-                        "{error}; capture input cleanup failed: {cleanup_error}"
-                    )
-                    .into()),
-                };
-            }
+            None
         };
 
         if fullscreen {
-            self.complete_capture(image, demo, output)
-        } else {
-            self.pending_image = Some(image.clone());
-            self.pending_output = Some(output);
-            self.current_demo = demo;
-            let result = self.ui.start_selection(&self.context, &image);
-            if result.is_err() {
-                self.pending_image = None;
-                self.pending_output = None;
-                let _ = self.ui.close_capture_cursor(&self.context);
+            let image = frozen_image
+                .take()
+                .expect("fullscreen capture prepared a frozen image");
+            return self.complete_capture(image, demo, output);
+        }
+
+        let frame = native_capture
+            .take()
+            .map(FrozenSelectionFrame::Native)
+            .unwrap_or_else(|| {
+                FrozenSelectionFrame::Client(
+                    frozen_image
+                        .take()
+                        .expect("client-side capture prepared a frozen image"),
+                )
+            });
+        self.start_or_queue_selection(PendingSelectionCapture {
+            frame,
+            output,
+            demo,
+            started: Instant::now(),
+            next_escape_attempt: Instant::now(),
+            escape_sent: false,
+        })
+    }
+
+    /// Acquire selection input after the frame is frozen.  A context menu may
+    /// still own the pointer at this point, so keep the frame pending while it
+    /// releases that grab.  The event-loop retry keeps modifier release and
+    /// menu dismissal independent from the selection image.
+    fn start_or_queue_selection(&mut self, mut pending: PendingSelectionCapture) -> AppResult<()> {
+        match self.ui.prepare_capture_cursor(&self.context) {
+            Ok(()) => {
+                mark_selection_input_ready();
+                self.activate_pending_selection(pending)
             }
-            result
+            Err(error) if is_pointer_grab_conflict(error.as_ref()) => {
+                eprintln!("snipchord: capture input is busy: {error}");
+                if dismiss_external_menu() {
+                    pending.escape_sent = true;
+                    eprintln!("snipchord: dismissed the external menu; waiting for input");
+                }
+                pending.next_escape_attempt = Instant::now() + ESCAPE_RETRY;
+                self.pending_capture = Some(pending);
+                Ok(())
+            }
+            Err(error) => {
+                destroy_pending_frame(&self.context, pending.frame);
+                Err(error)
+            }
+        }
+    }
+
+    fn activate_pending_selection(&mut self, pending: PendingSelectionCapture) -> AppResult<()> {
+        match pending.frame {
+            FrozenSelectionFrame::Native(capture) => {
+                self.pending_image = None;
+                self.pending_output = Some(pending.output);
+                self.current_demo = false;
+                if let Err(error) = self.ui.start_selection_native(&self.context, capture) {
+                    self.pending_output = None;
+                    eprintln!("snipchord: native selection unavailable: {error}");
+                    return Err(error);
+                }
+            }
+            FrozenSelectionFrame::Client(image) => {
+                self.pending_image = Some(image.clone());
+                self.pending_output = Some(pending.output);
+                self.current_demo = pending.demo;
+                if let Err(error) = self.ui.start_selection(&self.context, &image) {
+                    self.pending_image = None;
+                    self.pending_output = None;
+                    let _ = self.ui.close_capture_cursor(&self.context);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn retry_pending_selection(&mut self) -> AppResult<()> {
+        let Some(mut pending) = self.pending_capture.take() else {
+            return Ok(());
+        };
+        if pending.started.elapsed() >= PENDING_CAPTURE_TIMEOUT {
+            destroy_pending_frame(&self.context, pending.frame);
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the external menu kept the pointer grab",
+            )
+            .into());
+        }
+
+        match self.ui.prepare_capture_cursor(&self.context) {
+            Ok(()) => {
+                mark_selection_input_ready();
+                self.activate_pending_selection(pending)
+            }
+            Err(error) if is_pointer_grab_conflict(error.as_ref()) => {
+                // Confirm that the foreign grab is still present before
+                // injecting Escape. The menu may have dismissed itself since
+                // the previous retry; in that case the just-acquired grab
+                // above is the only input we should create.
+                if !pending.escape_sent && Instant::now() >= pending.next_escape_attempt {
+                    if dismiss_external_menu() {
+                        pending.escape_sent = true;
+                        eprintln!("snipchord: dismissed the external menu; waiting for input");
+                    }
+                    pending.next_escape_attempt = Instant::now() + ESCAPE_RETRY;
+                }
+                self.pending_capture = Some(pending);
+                Ok(())
+            }
+            Err(error) => {
+                destroy_pending_frame(&self.context, pending.frame);
+                Err(error)
+            }
+        }
+    }
+
+    fn discard_pending_selection(&mut self) {
+        if let Some(pending) = self.pending_capture.take() {
+            destroy_pending_frame(&self.context, pending.frame);
         }
     }
 
@@ -746,13 +864,20 @@ impl App {
             return Ok(());
         };
         let output = self.pending_output.take().unwrap_or(OutputMode::Legacy);
-        let captured = self.window_picker.capture_target(
-            &self.context.conn,
-            target,
-            &full_image,
-            self.context.visual(),
-        )?;
-        self.complete_capture(captured.image, self.current_demo, output)
+        let rect = target
+            .clipped_to_root(full_image.width(), full_image.height())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "selected window is outside the frozen capture",
+                )
+            })?;
+        let image = full_image
+            .crop(rect.x, rect.y, rect.width, rect.height)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "selected window crop is empty")
+            })?;
+        self.complete_capture(image, self.current_demo, output)
     }
 
     fn complete_capture(
@@ -948,6 +1073,7 @@ impl App {
         // Opening preferences cancels an in-progress selection in the UI.  Do
         // the matching application-side cleanup or the next capture remains
         // blocked by the stale full-screen image.
+        self.discard_pending_selection();
         self.pending_image = None;
         self.pending_output = None;
         let shortcuts = shortcuts::configured_shortcuts();
@@ -958,6 +1084,7 @@ impl App {
     fn show_about(&mut self) -> AppResult<()> {
         // Opening an informational surface cancels any pending command state;
         // the UI owns the transient X11 windows and closes overlapping ones.
+        self.discard_pending_selection();
         self.pending_image = None;
         self.pending_output = None;
         self.ui.show_about(&self.context)
@@ -977,11 +1104,30 @@ impl App {
             }
         }
 
+        // XI2 raw key events are observed even while another client owns the
+        // active keyboard/pointer grab. Dispatch the capture immediately;
+        // the matching GNOME process-launch message is suppressed below when
+        // it arrives a moment later.
+        let raw_mode = self
+            .hotkeys
+            .as_mut()
+            .and_then(|hotkeys| hotkeys.handle_event(&event));
+        if let Some(mode) = raw_mode {
+            self.run_resident_action(|app| app.dispatch_mode(mode), "Capture failed");
+        }
+
         if let Some(command) = self
             .instance
             .as_ref()
             .and_then(|instance| self.context.instance_command(instance, &event))
         {
+            if mode_for_command(command).is_some_and(|mode| {
+                self.hotkeys
+                    .as_mut()
+                    .is_some_and(|hotkeys| hotkeys.suppress_duplicate(mode))
+            }) {
+                return Ok(());
+            }
             match command {
                 COMMAND_REGION => self.run_resident_action(
                     |app| app.begin_capture(false, false, OutputMode::Legacy),
@@ -1043,6 +1189,7 @@ impl App {
             UiAction::Selected(rect) => self.complete_selection(rect),
             UiAction::SelectedWindow(target) => self.complete_window_selection(target),
             UiAction::Cancelled => {
+                self.discard_pending_selection();
                 self.pending_image = None;
                 self.pending_output = None;
                 Ok(())
@@ -1051,6 +1198,7 @@ impl App {
                 // The UI uses Close for WM_DELETE on every transient surface,
                 // including the selection overlay.  A closed selection must
                 // release its captured root image as well.
+                self.discard_pending_selection();
                 self.pending_image = None;
                 self.pending_output = None;
                 Ok(())
@@ -1132,12 +1280,20 @@ impl App {
     fn event_loop(&mut self) -> AppResult<()> {
         while self.running {
             self.poll_preview_preparations();
+            self.tick_hotkeys();
+            if let Err(error) = self.retry_pending_selection() {
+                self.notify("Capture failed", &error.to_string());
+            }
             self.drain_events()?;
             if !self.running {
                 break;
             }
             self.ui.tick(&self.context)?;
             self.clipboard.tick(&self.context.conn)?;
+            self.tick_hotkeys();
+            if let Err(error) = self.retry_pending_selection() {
+                self.notify("Capture failed", &error.to_string());
+            }
             self.poll_preview_preparations();
             if !self.running {
                 break;
@@ -1157,12 +1313,34 @@ impl App {
                 (!self.preview_preparations.is_empty())
                     .then(|| Instant::now() + Duration::from_millis(8)),
             );
+            let deadline = earliest_deadline(
+                deadline,
+                self.pending_capture
+                    .as_ref()
+                    .map(|_| Instant::now() + PENDING_CAPTURE_RETRY),
+            );
+            let deadline = earliest_deadline(
+                deadline,
+                self.hotkeys
+                    .as_ref()
+                    .map(|_| Instant::now() + Duration::from_secs(1)),
+            );
             if deadline.is_some_and(|when| when <= Instant::now()) {
                 continue;
             }
             self.wait_for_x11(deadline)?;
         }
         Ok(())
+    }
+
+    fn tick_hotkeys(&mut self) {
+        let Some(hotkeys) = self.hotkeys.as_mut() else {
+            return;
+        };
+        if let Err(error) = hotkeys.tick(&self.context) {
+            eprintln!("snipchord: raw hotkeys stopped: {error}");
+            self.hotkeys = None;
+        }
     }
 
     fn drain_events(&mut self) -> AppResult<()> {
@@ -1220,6 +1398,7 @@ impl App {
 
     fn shutdown(&mut self, primary: AppResult<()>) -> AppResult<()> {
         self.finish_preview_preparations();
+        self.discard_pending_selection();
         if let Some(tray) = self.tray.take() {
             tray.shutdown();
         }
@@ -1265,6 +1444,124 @@ fn open_with_default_browser(url: &str) -> io::Result<()> {
             let _ = child.wait();
         })
         .map(|_| ())
+}
+
+fn destroy_pending_frame(context: &X11Context, frame: FrozenSelectionFrame) {
+    if let FrozenSelectionFrame::Native(capture) = frame {
+        let _ = capture.destroy(context);
+    }
+}
+
+fn is_pointer_grab_conflict(error: &(dyn Error + Send + Sync)) -> bool {
+    error
+        .to_string()
+        .contains("the X11 pointer is already grabbed")
+}
+
+fn mark_selection_input_ready() {
+    // The benchmark harness uses this marker to measure the point at which
+    // the selection grabs are available. Keep it after the pending retry has
+    // actually acquired the pointer, so a foreign context-menu grab is not
+    // reported as ready.
+    if env::var_os("SNIPCHORD_BENCHMARK_READY").is_some() {
+        eprintln!("selection_input_ready");
+    }
+}
+
+/// Try to send one plain Escape press/release through XTEST so a menu that
+/// owns the pointer can close and release its grab.  If the screenshot chord
+/// modifiers are still held, leave the frozen frame pending and let the next
+/// event-loop retry send Escape after they are released.
+fn dismiss_external_menu() -> bool {
+    let Ok(xlib) = x11_dl::xlib::Xlib::open() else {
+        return false;
+    };
+    let Ok(xtest) = x11_dl::xtest::Xf86vmode::open() else {
+        return false;
+    };
+
+    let display = unsafe { (xlib.XOpenDisplay)(ptr::null()) };
+    if display.is_null() {
+        return false;
+    }
+
+    let mut event_base = 0 as c_int;
+    let mut error_base = 0 as c_int;
+    let mut major_version = 0 as c_int;
+    let mut minor_version = 0 as c_int;
+    let extension_available = unsafe {
+        (xtest.XTestQueryExtension)(
+            display,
+            &mut event_base,
+            &mut error_base,
+            &mut major_version,
+            &mut minor_version,
+        )
+    } != 0;
+    if !extension_available {
+        unsafe {
+            (xlib.XCloseDisplay)(display);
+        }
+        return false;
+    }
+
+    // GNOME launches the command while the shortcut's modifier keys can
+    // still be physically held. Do not block or inject a modified Escape;
+    // the pending capture retries this check after the key-release event.
+    // XQueryKeymap is a server round trip on this short-lived connection, so
+    // the state is current on every check.
+    let modifier_keysyms = [
+        0xffe1_u64, // Shift_L
+        0xffe2_u64, // Shift_R
+        0xffe3_u64, // Control_L
+        0xffe4_u64, // Control_R
+        0xffe9_u64, // Alt_L
+        0xffea_u64, // Alt_R
+        0xffeb_u64, // Super_L
+        0xffec_u64, // Super_R
+    ];
+    if !x11_modifiers_released(&xlib, display, &modifier_keysyms) {
+        unsafe {
+            (xlib.XCloseDisplay)(display);
+        }
+        return false;
+    }
+
+    let keycode = unsafe { (xlib.XKeysymToKeycode)(display, XK_ESCAPE) };
+    if keycode == 0 {
+        unsafe {
+            (xlib.XCloseDisplay)(display);
+        }
+        return false;
+    }
+
+    let pressed = unsafe { (xtest.XTestFakeKeyEvent)(display, c_uint::from(keycode), 1, 0) } != 0;
+    let released = unsafe { (xtest.XTestFakeKeyEvent)(display, c_uint::from(keycode), 0, 0) } != 0;
+    unsafe {
+        (xlib.XFlush)(display);
+        (xlib.XCloseDisplay)(display);
+    }
+    pressed && released
+}
+
+fn x11_modifiers_released(
+    xlib: &x11_dl::xlib::Xlib,
+    display: *mut x11_dl::xlib::Display,
+    keysyms: &[u64],
+) -> bool {
+    let mut keymap = [0 as c_char; 32];
+    if unsafe { (xlib.XQueryKeymap)(display, keymap.as_mut_ptr()) } == 0 {
+        return false;
+    }
+    keysyms.iter().all(|keysym| {
+        let keycode = unsafe { (xlib.XKeysymToKeycode)(display, *keysym as c_ulong) };
+        if keycode < 8 {
+            return true;
+        }
+        let offset = usize::from(keycode);
+        let byte = keymap[offset / 8] as u8;
+        byte & (1u8 << (offset % 8)) == 0
+    })
 }
 
 fn earliest_deadline(first: Option<Instant>, second: Option<Instant>) -> Option<Instant> {

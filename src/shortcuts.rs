@@ -131,6 +131,24 @@ pub fn configured_shortcuts() -> ShortcutList {
 }
 
 fn read_configured_shortcuts() -> Option<Vec<(&'static [&'static str], String)>> {
+    Some(
+        configured_capture_shortcuts()?
+            .into_iter()
+            .filter_map(|(arguments, binding)| {
+                definition_for(&arguments).map(|definition| (definition.arguments, binding))
+            })
+            .collect(),
+    )
+}
+
+/// Read the exact commands managed by the installer together with their
+/// current GNOME binding strings.
+///
+/// Preferences only needs the definition that a command represents.  The raw
+/// listener also needs to distinguish the legacy `--region` command from the
+/// newer explicit `--region --clipboard` command, so this crate-visible view
+/// deliberately keeps the command arguments as configured.
+pub(crate) fn configured_capture_shortcuts() -> Option<Vec<(Vec<String>, String)>> {
     let raw_paths = gsettings_get(MEDIA_KEYS_SCHEMA, CUSTOM_KEYBINDINGS_KEY)?;
     let paths = parse_gvariant_strings(&raw_paths)?;
     let mut configured = Vec::new();
@@ -142,12 +160,12 @@ fn read_configured_shortcuts() -> Option<Vec<(&'static [&'static str], String)>>
         let Some(arguments) = command_arguments(&command) else {
             continue;
         };
+        if definition_for(&arguments).is_none() {
+            continue;
+        }
         let binding_value = gsettings_get(&schema, "binding")?;
         let binding = parse_gvariant_strings(&binding_value)?.into_iter().next()?;
-        let Some(definition) = definition_for(&arguments) else {
-            continue;
-        };
-        configured.push((definition.arguments, binding));
+        configured.push((arguments, binding));
     }
     Some(configured)
 }

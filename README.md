@@ -14,6 +14,8 @@ It also provides:
 - Region or full-desktop capture directly to the clipboard or a PNG file.
 - Immediate selection with a border visible on both light and dark content,
   without dimming the screen.
+- Select from a frozen view of the desktop, including open context menus,
+  so moving content stays at the moment capture started.
 - Press `Space` before dragging to pick the window under the pointer, or while
   dragging to move the selection.
 - Click the thumbnail to open the captured image. Clipboard previews keep only

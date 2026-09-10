@@ -3,6 +3,7 @@
 mod app;
 mod clipboard;
 mod geometry;
+mod hotkeys;
 mod image;
 mod server_capture;
 mod settings;
