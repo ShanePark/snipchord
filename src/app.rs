@@ -1304,6 +1304,11 @@ impl App {
             // successful retry with no future deadline could leave Esc or a
             // queued drag asleep in the connection buffer indefinitely.
             self.drain_events()?;
+            self.synchronize_hotkeys();
+            // QueryKeymap can read a raw event into x11rb's internal buffer
+            // while returning its reply. Drain that buffer before polling the
+            // socket so the next queued key is not delayed until the timeout.
+            self.drain_events()?;
             if !self.running {
                 break;
             }
@@ -1341,6 +1346,13 @@ impl App {
             eprintln!("snipchord: raw hotkeys stopped: {error}");
             self.hotkeys = None;
         }
+    }
+
+    fn synchronize_hotkeys(&mut self) {
+        let Some(hotkeys) = self.hotkeys.as_mut() else {
+            return;
+        };
+        hotkeys.synchronize_pressed(&self.context);
     }
 
     fn drain_events(&mut self) -> AppResult<()> {

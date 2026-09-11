@@ -205,7 +205,7 @@ impl Hotkeys {
             last_external: None,
         };
         hotkeys.reload(context)?;
-        hotkeys.pressed = query_pressed_keys(context);
+        hotkeys.pressed = query_pressed_keys(context).unwrap_or_default();
         Ok(Some(hotkeys))
     }
 
@@ -302,6 +302,44 @@ impl Hotkeys {
             self.last_external = None;
         }
         Ok(())
+    }
+
+    /// Reconcile modifier state with the server's authoritative key state
+    /// after the event queue has been drained.
+    ///
+    /// Raw release events can be lost while a foreign client owns a keyboard
+    /// grab.  Keeping a stale modifier in `pressed` would make a later plain
+    /// `Shift+4` look like the configured `Alt+Shift+4` binding.  Callers do
+    /// this only after processing queued events so a valid chord is still
+    /// reconstructed from its raw press sequence before the snapshot wins.
+    /// Keep non-modifier keys owned by the raw stream: a new key press may
+    /// already be represented in the server snapshot while its raw event is
+    /// still queued on this connection.
+    pub fn synchronize_pressed(&mut self, context: &X11Context) {
+        let Some(pressed) = query_pressed_keys(context) else {
+            return;
+        };
+        self.reconcile_pressed(pressed);
+    }
+
+    fn reconcile_pressed(&mut self, pressed: HashSet<Keycode>) {
+        let mut changed = false;
+        for keycode in self.keymap.modifier_masks.keys() {
+            let was_pressed = self.pressed.contains(keycode);
+            let is_pressed = pressed.contains(keycode);
+            if was_pressed == is_pressed {
+                continue;
+            }
+            changed = true;
+            if is_pressed {
+                self.pressed.insert(*keycode);
+            } else {
+                self.pressed.remove(keycode);
+            }
+        }
+        if changed {
+            self.fired.clear();
+        }
     }
 
     /// Force a keyboard mapping reload and re-apply the current settings.
@@ -504,12 +542,12 @@ fn is_key_repeat(flags: KeyEventFlags) -> bool {
     u32::from(flags) & u32::from(KeyEventFlags::KEY_REPEAT) != 0
 }
 
-fn query_pressed_keys(context: &X11Context) -> HashSet<Keycode> {
+fn query_pressed_keys(context: &X11Context) -> Option<HashSet<Keycode>> {
     let Ok(cookie) = context.conn.query_keymap() else {
-        return HashSet::new();
+        return None;
     };
     let Ok(reply) = cookie.reply() else {
-        return HashSet::new();
+        return None;
     };
     let mut pressed = HashSet::new();
     for (byte_index, byte) in reply.keys.iter().enumerate() {
@@ -522,7 +560,7 @@ fn query_pressed_keys(context: &X11Context) -> HashSet<Keycode> {
             }
         }
     }
-    pressed
+    Some(pressed)
 }
 
 fn mode_for_arguments(arguments: &[String]) -> Option<Mode> {
@@ -766,6 +804,130 @@ mod tests {
                 KeyEventFlags::default(),
             ))),
             Some(mode)
+        );
+    }
+
+    #[test]
+    fn authoritative_pressed_state_prevents_stale_modifiers_from_matching_shift_four() {
+        let alt: super::Keycode = 64;
+        let control: super::Keycode = 37;
+        let shift: super::Keycode = 50;
+        let key: super::Keycode = 13;
+        let alt_mode = Mode::RegionSave;
+        let control_alt_mode = Mode::RegionClipboard;
+        let mut keysyms = HashMap::new();
+        keysyms.insert(key, vec![0x34]);
+        let mut hotkeys = super::Hotkeys {
+            bindings: vec![
+                super::Binding {
+                    mode: alt_mode,
+                    keycodes: HashSet::from([key]),
+                    modifiers: super::SHIFT_MASK | super::MOD1_MASK,
+                },
+                super::Binding {
+                    mode: control_alt_mode,
+                    keycodes: HashSet::from([key]),
+                    modifiers: super::SHIFT_MASK | super::MOD1_MASK | super::CONTROL_MASK,
+                },
+            ],
+            keymap: super::KeyMap {
+                keysyms,
+                modifier_masks: HashMap::from([
+                    (alt, super::MOD1_MASK),
+                    (control, super::CONTROL_MASK),
+                    (shift, super::SHIFT_MASK),
+                ]),
+                ignored_modifiers: 0,
+            },
+            pressed: HashSet::new(),
+            fired: Vec::new(),
+            configured: Vec::new(),
+            settings_watcher: super::SettingsWatcher::start(),
+            mapping_dirty: false,
+            last_raw: None,
+            last_external: None,
+        };
+
+        assert_eq!(
+            hotkeys.handle_event(&Event::XinputRawKeyPress(raw_key(
+                control,
+                KeyEventFlags::default()
+            ))),
+            None
+        );
+        assert_eq!(
+            hotkeys.handle_event(&Event::XinputRawKeyPress(raw_key(
+                alt,
+                KeyEventFlags::default()
+            ))),
+            None
+        );
+        assert_eq!(
+            hotkeys.handle_event(&Event::XinputRawKeyPress(raw_key(
+                shift,
+                KeyEventFlags::default()
+            ))),
+            None
+        );
+        assert_eq!(
+            hotkeys.handle_event(&Event::XinputRawKeyPress(raw_key(
+                key,
+                KeyEventFlags::default()
+            ))),
+            Some(control_alt_mode)
+        );
+
+        // The Alt and Control releases were missed while a foreign client
+        // owned the grab. Releasing the other keys leaves stale modifiers in
+        // the raw tracker.
+        hotkeys.handle_event(&Event::XinputRawKeyRelease(raw_key(
+            key,
+            KeyEventFlags::default(),
+        )));
+        hotkeys.handle_event(&Event::XinputRawKeyRelease(raw_key(
+            shift,
+            KeyEventFlags::default(),
+        )));
+        assert_eq!(hotkeys.pressed, HashSet::from([control, alt]));
+
+        // The post-queue X11 snapshot is authoritative and clears the stale
+        // modifier before the next plain Shift+4 is considered.
+        hotkeys.reconcile_pressed(HashSet::new());
+        assert_eq!(
+            hotkeys.handle_event(&Event::XinputRawKeyPress(raw_key(
+                shift,
+                KeyEventFlags::default()
+            ))),
+            None
+        );
+        assert_eq!(
+            hotkeys.handle_event(&Event::XinputRawKeyPress(raw_key(
+                key,
+                KeyEventFlags::default()
+            ))),
+            None
+        );
+
+        hotkeys.handle_event(&Event::XinputRawKeyRelease(raw_key(
+            key,
+            KeyEventFlags::default(),
+        )));
+        hotkeys.handle_event(&Event::XinputRawKeyRelease(raw_key(
+            shift,
+            KeyEventFlags::default(),
+        )));
+
+        // A valid Alt+Shift chord remains valid after synchronization when
+        // its modifiers and target are physically held. The target is left
+        // to the raw stream so its queued press still fires once.
+        hotkeys.reconcile_pressed(HashSet::from([alt, shift, key]));
+        assert!(!hotkeys.pressed.contains(&key));
+        assert_eq!(
+            hotkeys.handle_event(&Event::XinputRawKeyPress(raw_key(
+                key,
+                KeyEventFlags::default()
+            ))),
+            Some(alt_mode)
         );
     }
 
